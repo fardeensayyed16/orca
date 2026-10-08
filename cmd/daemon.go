@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -32,63 +34,58 @@ var daemonCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
-		// 1. Resolve configuration
-		bindAddr := daemonBindAddress
-		if bindAddr == "" {
-			bindAddr = config.GlobalConfig.Daemon.BindAddress
-		}
-		if bindAddr == "" {
-			bindAddr = "0.0.0.0:9001"
-		}
+		// Resolve addresses
+		bindAddr := firstNonEmpty(daemonBindAddress, config.GlobalConfig.Daemon.BindAddress, "0.0.0.0:9001")
+		guiBindAddr := firstNonEmpty(config.GlobalConfig.Daemon.GUIBindAddress, "127.0.0.1:9000")
+		advAddr := firstNonEmpty(daemonAdvertiseAddress, config.GlobalConfig.Daemon.AdvertiseAddress, bindAddr)
+		dataDir := firstNonEmpty(daemonDataDir, config.GlobalConfig.Daemon.DataDir)
 
-		advAddr := daemonAdvertiseAddress
-		if advAddr == "" {
-			advAddr = config.GlobalConfig.Daemon.AdvertiseAddress
-		}
-		if advAddr == "" {
-			advAddr = bindAddr
-		}
-
-		guiBindAddr := config.GlobalConfig.Daemon.GUIBindAddress
-		if guiBindAddr == "" {
-			guiBindAddr = "127.0.0.1:9000"
-		}
-
-		dataDir := daemonDataDir
-		if dataDir == "" {
-			dataDir = config.GlobalConfig.Daemon.DataDir
-		}
-
-		// 2. Initialize SQLite Storage
+		// 1. SQLite Storage
 		store, err := storage.NewSQLiteStorage(dataDir)
 		if err != nil {
 			return fmt.Errorf("storage initialization failed: %w", err)
 		}
 		defer store.Close()
 
+		// 2. Token: load or auto-generate
+		token, err := store.GetToken(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to read token: %w", err)
+		}
+		if token == "" {
+			raw := make([]byte, 32)
+			if _, err := rand.Read(raw); err != nil {
+				return fmt.Errorf("failed to generate token: %w", err)
+			}
+			token = hex.EncodeToString(raw)
+			if err := store.SetToken(ctx, token); err != nil {
+				return fmt.Errorf("failed to persist token: %w", err)
+			}
+			fmt.Printf("Generated API token: %s. Save this — orclet and CLI need it.\n", token)
+		}
+
 		// 3. Restore proxy listeners (Rule C2)
 		proxyMgr := proxy.NewProxyManager(store, bindAddr)
 		defer proxyMgr.Close()
-
 		if err := proxyMgr.RestoreListeners(ctx); err != nil {
-			log.Printf("Warning: restoring proxy listeners failed: %v", err)
+			log.Printf("Warning: restoring proxy listeners: %v", err)
 		}
 
-		// 4. Create API Server
-		apiServer := api.NewServer(store)
+		// 4. API Server (token-aware)
+		apiSrv := api.NewServer(store, token)
 		apiHTTP := &http.Server{
-			Addr:    bindAddr,
-			Handler: apiServer,
+			Addr:         bindAddr,
+			Handler:      apiSrv,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
 		}
-
-		// 5. Start API Server goroutine
 		go func() {
 			if err := apiHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Fatalf("API server failure: %v", err)
+				log.Fatalf("API server: %v", err)
 			}
 		}()
 
-		// 6. GUI Listener (Stub or enabled)
+		// 5. GUI Listener (stub; loopback only)
 		var guiHTTP *http.Server
 		if !daemonNoGUI {
 			guiMux := http.NewServeMux()
@@ -96,42 +93,41 @@ var daemonCmd = &cobra.Command{
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("orca GUI"))
 			})
-
 			guiHTTP = &http.Server{
 				Addr:    guiBindAddr,
 				Handler: guiMux,
 			}
-
 			go func() {
 				if err := guiHTTP.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					log.Printf("GUI server error: %v", err)
+					log.Printf("GUI server: %v", err)
 				}
 			}()
 		}
 
-		// 7. Output exactly the 3 required startup log lines
+		// 6. Exactly 3 required startup log lines
 		fmt.Printf("API listening on %s\n", bindAddr)
-		if !daemonNoGUI {
-			fmt.Printf("GUI listening on %s\n", guiBindAddr)
-		} else {
-			fmt.Printf("GUI listening on %s (disabled)\n", guiBindAddr)
-		}
+		fmt.Printf("GUI listening on %s\n", guiBindAddr)
 		fmt.Printf("Advertise address: %s\n", advAddr)
 
-		// 8. Wait for shutdown signal
+		// 7. Wait for shutdown
 		<-ctx.Done()
-
-		// Graceful shutdown
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-
 		if guiHTTP != nil {
 			_ = guiHTTP.Shutdown(shutdownCtx)
 		}
 		_ = apiHTTP.Shutdown(shutdownCtx)
-
 		return nil
 	},
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func init() {
@@ -140,6 +136,5 @@ func init() {
 	daemonCmd.Flags().BoolVar(&daemonNoGUI, "no-gui", false, "Disable embedded web GUI")
 	daemonCmd.Flags().StringVar(&daemonDataDir, "data-dir", "", "Data directory for SQLite database")
 	daemonCmd.Flags().StringVar(&daemonConfig, "config", "", "Path to config file (default: ~/.orca/config.yaml)")
-
 	rootCmd.AddCommand(daemonCmd)
 }
