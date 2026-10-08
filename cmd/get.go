@@ -22,7 +22,7 @@ var getNodesCmd = &cobra.Command{
 	Use:   "nodes",
 	Short: "List all registered worker nodes",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c := client.New()
+		c := client.New(cmd)
 		req, err := c.NewRequest(http.MethodGet, "/api/v1/nodes")
 		if err != nil {
 			return err

@@ -69,26 +69,23 @@ func InitConfig(cmd *cobra.Command) error {
 	if cmd != nil {
 		_ = v.BindPFlags(cmd.Flags())
 		_ = v.BindPFlags(cmd.PersistentFlags())
-		// Explicit bindings for flags to nested viper keys if needed
-		if f := cmd.Flags().Lookup("bind-address"); f != nil {
-			_ = v.BindPFlag("daemon.bind_address", f)
-		}
-		if f := cmd.Flags().Lookup("advertise-address"); f != nil {
-			_ = v.BindPFlag("daemon.advertise_address", f)
-		}
-		if f := cmd.Flags().Lookup("data-dir"); f != nil {
-			_ = v.BindPFlag("daemon.data_dir", f)
-		}
-		if f := cmd.PersistentFlags().Lookup("server"); f != nil {
-			_ = v.BindPFlag("client.server", f)
-		}
-		if f := cmd.PersistentFlags().Lookup("token"); f != nil {
-			_ = v.BindPFlag("client.token", f)
+		if cmd.Root() != nil {
+			_ = v.BindPFlags(cmd.Root().PersistentFlags())
 		}
 	}
 
 	if err := v.Unmarshal(&GlobalConfig); err != nil {
 		return fmt.Errorf("unable to decode into config struct: %w", err)
+	}
+
+	// Direct fallback check on root flags if viper didn't populate struct
+	if cmd != nil && cmd.Root() != nil {
+		if f := cmd.Root().PersistentFlags().Lookup("server"); f != nil && f.Changed {
+			GlobalConfig.Client.Server = f.Value.String()
+		}
+		if f := cmd.Root().PersistentFlags().Lookup("token"); f != nil && f.Changed {
+			GlobalConfig.Client.Token = f.Value.String()
+		}
 	}
 
 	return nil

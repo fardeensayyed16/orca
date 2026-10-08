@@ -14,6 +14,7 @@ import (
 
 	"github.com/fardeensayyed16/orca/internal/api"
 	"github.com/fardeensayyed16/orca/internal/proxy"
+	"github.com/fardeensayyed16/orca/internal/reconciler"
 	"github.com/fardeensayyed16/orca/internal/storage"
 	"github.com/fardeensayyed16/orca/pkg/config"
 	"github.com/spf13/cobra"
@@ -64,14 +65,18 @@ var daemonCmd = &cobra.Command{
 			fmt.Printf("Generated API token: %s. Save this — orclet and CLI need it.\n", token)
 		}
 
-		// 3. Restore proxy listeners (Rule C2)
+		// 3. Start Node Liveness Watcher (15s threshold, 5s check interval)
+		livenessWatcher := reconciler.NewNodeLivenessWatcher(store, 15*time.Second, 5*time.Second)
+		go livenessWatcher.Start(ctx)
+
+		// 4. Restore proxy listeners (Rule C2)
 		proxyMgr := proxy.NewProxyManager(store, bindAddr)
 		defer proxyMgr.Close()
 		if err := proxyMgr.RestoreListeners(ctx); err != nil {
 			log.Printf("Warning: restoring proxy listeners: %v", err)
 		}
 
-		// 4. API Server (token-aware)
+		// 5. API Server (token-aware)
 		apiSrv := api.NewServer(store, token)
 		apiHTTP := &http.Server{
 			Addr:         bindAddr,
@@ -85,7 +90,7 @@ var daemonCmd = &cobra.Command{
 			}
 		}()
 
-		// 5. GUI Listener (stub; loopback only)
+		// 6. GUI Listener (stub; loopback only)
 		var guiHTTP *http.Server
 		if !daemonNoGUI {
 			guiMux := http.NewServeMux()
@@ -104,12 +109,12 @@ var daemonCmd = &cobra.Command{
 			}()
 		}
 
-		// 6. Exactly 3 required startup log lines
+		// 7. Exactly 3 required startup log lines
 		fmt.Printf("API listening on %s\n", bindAddr)
 		fmt.Printf("GUI listening on %s\n", guiBindAddr)
 		fmt.Printf("Advertise address: %s\n", advAddr)
 
-		// 7. Wait for shutdown
+		// 8. Wait for shutdown
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

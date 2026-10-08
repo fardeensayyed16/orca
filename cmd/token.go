@@ -19,7 +19,7 @@ var tokenShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show the API token (loopback --server only)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		c := client.New()
+		c := client.New(cmd)
 		req, err := c.NewRequest(http.MethodPost, "/api/v1/token/show")
 		if err != nil {
 			return err

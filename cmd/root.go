@@ -9,14 +9,16 @@ import (
 )
 
 var (
-	serverFlag string
-	tokenFlag  string
+	ServerFlag string
+	TokenFlag  string
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "orca",
-	Short: "Orca Container Orchestrator CLI",
-	Long:  `Orca is a lightweight container orchestration system.`,
+	Use:           "orca",
+	Short:         "Orca Container Orchestrator CLI",
+	Long:          `Orca is a lightweight container orchestration system.`,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		return config.InitConfig(cmd)
 	},
@@ -33,6 +35,6 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&serverFlag, "server", "", "Orca master server URL")
-	rootCmd.PersistentFlags().StringVar(&tokenFlag, "token", "", "Authentication token")
+	rootCmd.PersistentFlags().StringVar(&ServerFlag, "server", "", "Orca master server URL")
+	rootCmd.PersistentFlags().StringVar(&TokenFlag, "token", "", "Authentication token")
 }
