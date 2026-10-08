@@ -1,0 +1,206 @@
+package storage
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/fardeensayyed16/orca/pkg/types"
+)
+
+type MapStorage struct {
+	mu       sync.RWMutex
+	services map[string]*types.Service
+	replicas map[string]*types.Replica
+	nodes    map[string]*types.Node
+	metrics  []*types.Metrics
+	token    string
+}
+
+type mapTx struct{}
+
+func (m *mapTx) Commit() error   { return nil }
+func (m *mapTx) Rollback() error { return nil }
+
+func NewMapStorage() *MapStorage {
+	return &MapStorage{
+		services: make(map[string]*types.Service),
+		replicas: make(map[string]*types.Replica),
+		nodes:    make(map[string]*types.Node),
+		metrics:  make([]*types.Metrics, 0),
+	}
+}
+
+func (m *MapStorage) Close() error {
+	return nil
+}
+
+func (m *MapStorage) WithTx(ctx context.Context, fn func(tx Tx) error) error {
+	return fn(&mapTx{})
+}
+
+func (m *MapStorage) DeployService(ctx context.Context, svc *types.Service) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.services[svc.Name] = svc
+	return nil
+}
+
+func (m *MapStorage) ListServices(ctx context.Context) ([]*types.Service, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var list []*types.Service
+	for _, s := range m.services {
+		list = append(list, s)
+	}
+	return list, nil
+}
+
+func (m *MapStorage) GetService(ctx context.Context, name string) (*types.Service, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	svc, ok := m.services[name]
+	if !ok {
+		return nil, nil
+	}
+	return svc, nil
+}
+
+func (m *MapStorage) DeleteService(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.services, name)
+	return nil
+}
+
+func (m *MapStorage) UpsertReplica(ctx context.Context, r *types.Replica) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.replicas[r.ID] = r
+	return nil
+}
+
+func (m *MapStorage) ListReplicas(ctx context.Context) ([]*types.Replica, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var list []*types.Replica
+	for _, r := range m.replicas {
+		list = append(list, r)
+	}
+	return list, nil
+}
+
+func (m *MapStorage) GetReplica(ctx context.Context, id string) (*types.Replica, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	r, ok := m.replicas[id]
+	if !ok {
+		return nil, nil
+	}
+	return r, nil
+}
+
+func (m *MapStorage) DeleteReplica(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.replicas, id)
+	return nil
+}
+
+func (m *MapStorage) UpsertNode(ctx context.Context, node *types.Node) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nodes[node.Name] = node
+	return nil
+}
+
+func (m *MapStorage) ListNodes(ctx context.Context) ([]*types.Node, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var list []*types.Node
+	for _, n := range m.nodes {
+		list = append(list, n)
+	}
+	return list, nil
+}
+
+func (m *MapStorage) GetNode(ctx context.Context, name string) (*types.Node, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	n, ok := m.nodes[name]
+	if !ok {
+		return nil, nil
+	}
+	return n, nil
+}
+
+func (m *MapStorage) MarkNodeReady(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if n, ok := m.nodes[name]; ok {
+		n.Status = "Ready"
+		n.LastSeen = time.Now().UTC()
+		n.NotReadySince = nil
+	}
+	return nil
+}
+
+func (m *MapStorage) MarkNodeNotReady(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if n, ok := m.nodes[name]; ok {
+		n.Status = "NotReady"
+		now := time.Now().UTC()
+		if n.NotReadySince == nil {
+			n.NotReadySince = &now
+		}
+	}
+	return nil
+}
+
+func (m *MapStorage) RecordHeartbeat(ctx context.Context, name string, dockerOK bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if n, ok := m.nodes[name]; ok {
+		n.Status = "Ready"
+		n.LastSeen = time.Now().UTC()
+		n.NotReadySince = nil
+		n.DockerOK = dockerOK
+	}
+	return nil
+}
+
+func (m *MapStorage) InsertMetric(ctx context.Context, metric *types.Metrics) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.metrics = append(m.metrics, metric)
+	return nil
+}
+
+func (m *MapStorage) PruneOldMetrics(ctx context.Context, olderThan time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cutoff := time.Now().UTC().Add(-olderThan)
+	var kept []*types.Metrics
+	for _, met := range m.metrics {
+		if met.Timestamp.After(cutoff) {
+			kept = append(kept, met)
+		}
+	}
+	m.metrics = kept
+	return nil
+}
+
+func (m *MapStorage) GetToken(ctx context.Context) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.token, nil
+}
+
+func (m *MapStorage) SetToken(ctx context.Context, token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.token = token
+	return nil
+}
+
