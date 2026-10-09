@@ -38,6 +38,7 @@ type Storage interface {
 	MarkNodeReady(ctx context.Context, name string) error
 	MarkNodeNotReady(ctx context.Context, name string) error
 	RecordHeartbeat(ctx context.Context, name string, dockerOK bool) error
+	UpdateReplicaHeartbeat(ctx context.Context, nodeName string, replica *types.Replica) error
 
 	// Metric methods
 	InsertMetric(ctx context.Context, m *types.Metrics) error

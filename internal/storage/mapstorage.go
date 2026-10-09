@@ -209,6 +209,24 @@ func (m *MapStorage) RecordHeartbeat(ctx context.Context, name string, dockerOK 
 	return nil
 }
 
+func (m *MapStorage) UpdateReplicaHeartbeat(ctx context.Context, nodeName string, replica *types.Replica) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.replicas[replica.ID]
+	if !ok || existing.NodeName != nodeName {
+		return fmt.Errorf("replica %q is not assigned to node %q", replica.ID, nodeName)
+	}
+	existing.ContainerID = replica.ContainerID
+	existing.HostPort = replica.HostPort
+	existing.Status = replica.Status
+	existing.Health = replica.Health
+	existing.Ready = replica.Ready
+	existing.RestartCount = replica.RestartCount
+	existing.ExitCode = replica.ExitCode
+	existing.Message = replica.Message
+	return nil
+}
+
 func (m *MapStorage) InsertMetric(ctx context.Context, metric *types.Metrics) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

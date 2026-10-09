@@ -569,6 +569,27 @@ func (s *SQLiteStorage) RecordHeartbeat(ctx context.Context, name string, docker
 	return err
 }
 
+func (s *SQLiteStorage) UpdateReplicaHeartbeat(ctx context.Context, nodeName string, replica *types.Replica) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE replicas
+		SET container_id = ?, host_port = ?, status = ?, health = ?, ready = ?,
+		    restart_count = ?, exit_code = ?, message = ?
+		WHERE id = ? AND node_name = ?`,
+		replica.ContainerID, replica.HostPort, string(replica.Status), string(replica.Health),
+		replica.Ready, replica.RestartCount, replica.ExitCode, replica.Message,
+		replica.ID, nodeName)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return fmt.Errorf("replica %q is not assigned to node %q", replica.ID, nodeName)
+	}
+	return nil
+}
+
 func scanNode(scanner interface {
 	Scan(dest ...any) error
 }) (*types.Node, error) {

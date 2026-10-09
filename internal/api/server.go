@@ -41,6 +41,7 @@ func (s *Server) routes() {
 	// Token-protected node routes
 	s.mux.HandleFunc("POST /api/v1/nodes/register", s.auth(s.handleRegisterNode))
 	s.mux.HandleFunc("POST /api/v1/nodes/{name}/heartbeat", s.auth(s.handleHeartbeat))
+	s.mux.HandleFunc("GET /api/v1/work/{nodeName}", s.auth(s.handleWork))
 	s.mux.HandleFunc("GET /api/v1/nodes", s.auth(s.handleListNodes))
 	s.mux.HandleFunc("GET /api/v1/nodes/{name}", s.auth(s.handleGetNode))
 	s.mux.HandleFunc("DELETE /api/v1/nodes/{name}", s.auth(s.handleDeleteNode))
@@ -86,20 +87,51 @@ type RegisterRequest struct {
 }
 
 type HeartbeatRequest struct {
-	Address             string   `json:"address"`
-	ContainerIDs        []string `json:"container_ids"`
-	DockerOK            bool     `json:"docker_ok"`
-	CapacityCPUMillis   int64    `json:"capacity_cpu_millis,omitempty"`
-	CapacityMemoryBytes int64    `json:"capacity_memory_bytes,omitempty"`
+	Address             string             `json:"address"`
+	ContainerIDs        []string           `json:"container_ids"`
+	Replicas            []ReplicaHeartbeat `json:"replicas"`
+	DockerOK            bool               `json:"docker_ok"`
+	CapacityCPUMillis   int64              `json:"capacity_cpu_millis,omitempty"`
+	CapacityMemoryBytes int64              `json:"capacity_memory_bytes,omitempty"`
+}
+
+type ReplicaHeartbeat struct {
+	ID           string             `json:"id"`
+	ContainerID  string             `json:"container_id"`
+	HostPort     int                `json:"host_port"`
+	Status       types.PodStatus    `json:"status"`
+	Health       types.HealthStatus `json:"health"`
+	Ready        bool               `json:"ready"`
+	RestartCount int                `json:"restart_count"`
+	ExitCode     int                `json:"exit_code"`
+	Message      string             `json:"message,omitempty"`
+}
+
+type WorkReplica struct {
+	ID                  string              `json:"id"`
+	ServiceName         string              `json:"service_name"`
+	Image               string              `json:"image"`
+	CPUMillis           int64               `json:"cpu_millis"`
+	MemoryBytes         int64               `json:"memory_bytes"`
+	ContainerPort       int                 `json:"container_port"`
+	DesiredRestartCount int                 `json:"desired_restart_count"`
+	RestartPolicy       types.RestartPolicy `json:"restart_policy,omitempty"`
+	PullPolicy          types.PullPolicy    `json:"pull_policy,omitempty"`
+	Env                 map[string]string   `json:"env,omitempty"`
+	Command             []string            `json:"command,omitempty"`
 }
 
 type CreateServiceRequest struct {
-	Name          string `json:"name"`
-	Image         string `json:"image"`
-	Replicas      int    `json:"replicas"`
-	CPUMillis     int64  `json:"cpu_millis"`
-	MemoryBytes   int64  `json:"memory_bytes"`
-	ContainerPort int    `json:"container_port"`
+	Name          string              `json:"name"`
+	Image         string              `json:"image"`
+	Replicas      int                 `json:"replicas"`
+	CPUMillis     int64               `json:"cpu_millis"`
+	MemoryBytes   int64               `json:"memory_bytes"`
+	ContainerPort int                 `json:"container_port"`
+	RestartPolicy types.RestartPolicy `json:"restart_policy,omitempty"`
+	PullPolicy    types.PullPolicy    `json:"pull_policy,omitempty"`
+	Env           map[string]string   `json:"env,omitempty"`
+	Command       []string            `json:"command,omitempty"`
 }
 
 type ReplicaSummary struct {
@@ -139,6 +171,24 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "replicas, resources, or container_port are invalid", http.StatusBadRequest)
 		return
 	}
+	if req.RestartPolicy == "" {
+		req.RestartPolicy = types.RestartPolicyAlways
+	}
+	if req.RestartPolicy != types.RestartPolicyAlways &&
+		req.RestartPolicy != types.RestartPolicyOnFailure &&
+		req.RestartPolicy != types.RestartPolicyNever {
+		jsonError(w, "restart_policy must be Always, OnFailure, or Never", http.StatusBadRequest)
+		return
+	}
+	if req.PullPolicy == "" {
+		req.PullPolicy = types.PullPolicyIfNotPresent
+	}
+	if req.PullPolicy != types.PullPolicyIfNotPresent &&
+		req.PullPolicy != types.PullPolicyAlways &&
+		req.PullPolicy != types.PullPolicyNever {
+		jsonError(w, "pull_policy must be IfNotPresent, Always, or Never", http.StatusBadRequest)
+		return
+	}
 
 	existing, err := s.store.GetService(r.Context(), req.Name)
 	if err != nil {
@@ -163,6 +213,10 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		CPUMillis:     req.CPUMillis,
 		MemoryBytes:   req.MemoryBytes,
 		ContainerPort: req.ContainerPort,
+		RestartPolicy: req.RestartPolicy,
+		PullPolicy:    req.PullPolicy,
+		Env:           req.Env,
+		Command:       req.Command,
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	}
@@ -386,8 +440,10 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	// Update node in DB including capacity if zero or updated and docker_ok status
 	existing.LastSeen = time.Now().UTC()
-	existing.Status = "Ready"
-	existing.NotReadySince = nil
+	if existing.Status != "Deleting" {
+		existing.Status = "Ready"
+		existing.NotReadySince = nil
+	}
 	existing.DockerOK = req.DockerOK
 	if existing.CapacityCPUMillis == 0 && req.CapacityCPUMillis > 0 {
 		existing.CapacityCPUMillis = req.CapacityCPUMillis
@@ -400,10 +456,89 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	for _, reported := range req.Replicas {
+		assigned, err := s.store.GetReplica(r.Context(), reported.ID)
+		if err != nil {
+			jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if assigned == nil || assigned.NodeName != nodeName {
+			continue
+		}
+		replica := &types.Replica{
+			ID:           reported.ID,
+			ContainerID:  reported.ContainerID,
+			HostPort:     reported.HostPort,
+			Status:       reported.Status,
+			Health:       reported.Health,
+			Ready:        reported.Ready,
+			RestartCount: reported.RestartCount,
+			ExitCode:     reported.ExitCode,
+			Message:      reported.Message,
+		}
+		if err := s.store.UpdateReplicaHeartbeat(r.Context(), nodeName, replica); err != nil {
+			jsonError(w, "replica heartbeat error: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {
+	nodeName := r.PathValue("nodeName")
+	node, err := s.store.GetNode(r.Context(), nodeName)
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	desired := make([]WorkReplica, 0)
+	if node == nil || node.Status == "Deleting" || node.Status == "Draining" {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(desired)
+		return
+	}
+	replicas, err := s.store.ListReplicas(r.Context())
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	services, err := s.store.ListServices(r.Context())
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	servicesByName := make(map[string]*types.Service, len(services))
+	for _, service := range services {
+		servicesByName[service.Name] = service
+	}
+	for _, replica := range replicas {
+		if replica.NodeName != nodeName || replica.Status == types.PodStatusPending {
+			continue
+		}
+		service := servicesByName[replica.ServiceName]
+		if service == nil {
+			jsonError(w, "service for replica "+replica.ID+" not found", http.StatusInternalServerError)
+			return
+		}
+		desired = append(desired, WorkReplica{
+			ID:                  replica.ID,
+			ServiceName:         service.Name,
+			Image:               service.Image,
+			CPUMillis:           service.CPUMillis,
+			MemoryBytes:         service.MemoryBytes,
+			ContainerPort:       service.ContainerPort,
+			DesiredRestartCount: replica.RestartCount,
+			RestartPolicy:       service.RestartPolicy,
+			PullPolicy:          service.PullPolicy,
+			Env:                 service.Env,
+			Command:             service.Command,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(desired)
 }
 
 func (s *Server) handleGetNode(w http.ResponseWriter, r *http.Request) {
@@ -445,11 +580,16 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// In SQLite storage, we can delete the node row directly
-	if err := s.store.MarkNodeNotReady(r.Context(), nodeName); err != nil {
-		// Or delete
+	node, err := s.store.GetNode(r.Context(), nodeName)
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
-	// Let's implement actual node delete if supported or Upsert/Mark as needed
+	node.Status = "Deleting"
+	if err := s.store.UpsertNode(r.Context(), node); err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

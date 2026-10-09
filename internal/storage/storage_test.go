@@ -89,6 +89,18 @@ func testStorage(t *testing.T, store Storage) {
 	if err != nil || len(reps) != 1 {
 		t.Fatalf("ListReplicas failed: len %d, err %v", len(reps), err)
 	}
+	if err := store.UpdateReplicaHeartbeat(ctx, "node-1", &types.Replica{
+		ID: "web-rep-1", ContainerID: "container-1", HostPort: 40001,
+		Status: types.PodStatusRunning, Health: types.HealthStatusHealthy,
+		Ready: true, RestartCount: 2, ExitCode: 0,
+	}); err != nil {
+		t.Fatalf("UpdateReplicaHeartbeat error: %v", err)
+	}
+	updated, err := store.GetReplica(ctx, "web-rep-1")
+	if err != nil || updated == nil || !updated.Ready || updated.RestartCount != 2 ||
+		updated.ContainerID != "container-1" || updated.Status != types.PodStatusRunning {
+		t.Fatalf("UpdateReplicaHeartbeat mismatch: %+v, err %v", updated, err)
+	}
 
 	// Prune metrics test
 	m := &types.Metrics{
@@ -104,4 +116,3 @@ func testStorage(t *testing.T, store Storage) {
 		t.Fatalf("PruneOldMetrics error: %v", err)
 	}
 }
-
