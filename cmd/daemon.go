@@ -15,6 +15,7 @@ import (
 	"github.com/fardeensayyed16/orca/internal/api"
 	"github.com/fardeensayyed16/orca/internal/proxy"
 	"github.com/fardeensayyed16/orca/internal/reconciler"
+	"github.com/fardeensayyed16/orca/internal/serviceports"
 	"github.com/fardeensayyed16/orca/internal/storage"
 	"github.com/fardeensayyed16/orca/pkg/config"
 	"github.com/spf13/cobra"
@@ -69,15 +70,19 @@ var daemonCmd = &cobra.Command{
 		livenessWatcher := reconciler.NewNodeLivenessWatcher(store, 15*time.Second, 5*time.Second)
 		go livenessWatcher.Start(ctx)
 
-		// 4. Restore proxy listeners (Rule C2)
+		// 4. Restore service-port allocations and prepare proxy listeners (Rule C2)
 		proxyMgr := proxy.NewProxyManager(store, bindAddr)
 		defer proxyMgr.Close()
-		if err := proxyMgr.RestoreListeners(ctx); err != nil {
-			log.Printf("Warning: restoring proxy listeners: %v", err)
+		servicePorts, err := serviceports.NewAllocator(store, config.GlobalConfig.Daemon.ServicePortRange, bindAddr)
+		if err != nil {
+			return fmt.Errorf("service port allocator initialization failed: %w", err)
+		}
+		if err := servicePorts.Restore(ctx); err != nil {
+			return fmt.Errorf("service port allocation restore failed: %w", err)
 		}
 
 		// 5. API Server (token-aware)
-		apiSrv := api.NewServer(store, token)
+		apiSrv := api.NewServer(store, token, servicePorts)
 		apiHTTP := &http.Server{
 			Addr:         bindAddr,
 			Handler:      apiSrv,
@@ -89,6 +94,7 @@ var daemonCmd = &cobra.Command{
 				log.Fatalf("API server: %v", err)
 			}
 		}()
+		go proxyMgr.Start(ctx)
 		haReconciler := reconciler.NewHAReconciler(store, 15*time.Second)
 		go haReconciler.Start(ctx)
 		log.Printf("HA reconciler started (interval 15s)")

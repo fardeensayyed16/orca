@@ -11,24 +11,34 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fardeensayyed16/orca/internal/scheduler"
+	"github.com/fardeensayyed16/orca/internal/serviceports"
 	"github.com/fardeensayyed16/orca/internal/storage"
 	"github.com/fardeensayyed16/orca/pkg/types"
 )
 
 type Server struct {
-	store storage.Storage
-	mux   *http.ServeMux
-	token string
+	store            storage.Storage
+	mux              *http.ServeMux
+	token            string
+	ports            *serviceports.Allocator
+	portAllocatorErr error
+	serviceMu        sync.Mutex
 }
 
-func NewServer(store storage.Storage, token string) *Server {
+func NewServer(store storage.Storage, token string, allocators ...*serviceports.Allocator) *Server {
 	s := &Server{
 		store: store,
 		mux:   http.NewServeMux(),
 		token: token,
+	}
+	if len(allocators) > 0 {
+		s.ports = allocators[0]
+	} else {
+		s.ports, s.portAllocatorErr = serviceports.NewAllocator(store, serviceports.DefaultRange, "0.0.0.0:9001")
 	}
 	s.routes()
 	return s
@@ -51,6 +61,7 @@ func (s *Server) routes() {
 	// Token-protected service and pod routes
 	s.mux.HandleFunc("POST /api/v1/services", s.auth(s.handleCreateService))
 	s.mux.HandleFunc("GET /api/v1/services", s.auth(s.handleListServices))
+	s.mux.HandleFunc("DELETE /api/v1/services/{name}", s.auth(s.handleDeleteService))
 	s.mux.HandleFunc("GET /api/v1/services/{name}/endpoints", s.auth(s.handleServiceEndpoints))
 	s.mux.HandleFunc("GET /api/v1/pods", s.auth(s.handleListPods))
 
@@ -161,6 +172,9 @@ type CreateServiceResponse struct {
 }
 
 func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
+	s.serviceMu.Lock()
+	defer s.serviceMu.Unlock()
+
 	var req CreateServiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -221,6 +235,22 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 	if req.MemoryBytes == 0 {
 		req.MemoryBytes = 536870912
 	}
+	servicePort := 0
+	if req.ContainerPort > 0 {
+		if s.portAllocatorErr != nil {
+			jsonError(w, "service port allocator unavailable: "+s.portAllocatorErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		if s.ports == nil {
+			jsonError(w, "service port allocator is not configured", http.StatusInternalServerError)
+			return
+		}
+		servicePort, err = s.ports.Allocate(r.Context(), req.Name)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+	}
 	service := &types.Service{
 		Name:          req.Name,
 		Image:         req.Image,
@@ -228,6 +258,7 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		CPUMillis:     req.CPUMillis,
 		MemoryBytes:   req.MemoryBytes,
 		ContainerPort: req.ContainerPort,
+		ServicePort:   servicePort,
 		RestartPolicy: req.RestartPolicy,
 		PullPolicy:    req.PullPolicy,
 		Env:           req.Env,
@@ -238,6 +269,9 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:     time.Now().UTC(),
 	}
 	if err := s.store.DeployService(r.Context(), service); err != nil {
+		if servicePort > 0 {
+			s.ports.Release(service.Name, servicePort)
+		}
 		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -272,6 +306,30 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(CreateServiceResponse{Service: service, Replicas: replicas})
+}
+
+func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
+	s.serviceMu.Lock()
+	defer s.serviceMu.Unlock()
+
+	name := r.PathValue("name")
+	service, err := s.store.GetService(r.Context(), name)
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if service == nil {
+		jsonError(w, "service not found", http.StatusNotFound)
+		return
+	}
+	if err := s.store.DeleteService(r.Context(), name); err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if s.ports != nil && service.ServicePort > 0 {
+		s.ports.Release(name, service.ServicePort)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func normalizeProbe(probe *types.Probe, kind string, containerPort int) error {

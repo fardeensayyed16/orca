@@ -85,6 +85,11 @@ func (m *MapStorage) DeleteService(ctx context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.services, name)
+	for id, replica := range m.replicas {
+		if replica.ServiceName == name {
+			delete(m.replicas, id)
+		}
+	}
 	return nil
 }
 

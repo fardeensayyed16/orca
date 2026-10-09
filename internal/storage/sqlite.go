@@ -269,8 +269,19 @@ func (s *SQLiteStorage) GetService(ctx context.Context, name string) (*types.Ser
 }
 
 func (s *SQLiteStorage) DeleteService(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM services WHERE name = ?", name)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM replicas WHERE service_name = ?", name); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM services WHERE name = ?", name); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
 
 func scanService(scanner interface {
