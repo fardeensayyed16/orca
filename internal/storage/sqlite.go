@@ -192,7 +192,14 @@ func (s *SQLiteStorage) DeployService(ctx context.Context, svc *types.Service) e
 	cmdJSON, _ := json.Marshal(svc.Command)
 	liveJSON, _ := json.Marshal(svc.Liveness)
 	readyJSON, _ := json.Marshal(svc.Readiness)
-	autoJSON, _ := json.Marshal(svc.Autoscale)
+	var autoJSON any
+	if svc.Autoscale != nil {
+		encoded, err := json.Marshal(svc.Autoscale)
+		if err != nil {
+			return fmt.Errorf("marshal autoscale config for service %q: %w", svc.Name, err)
+		}
+		autoJSON = string(encoded)
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	if svc.CreatedAt.IsZero() {
@@ -226,7 +233,7 @@ func (s *SQLiteStorage) DeployService(ctx context.Context, svc *types.Service) e
 		svc.Name, svc.Image, svc.Replicas, svc.ContainerPort, svc.ServicePort,
 		string(envJSON), string(cmdJSON), svc.CPUMillis, svc.MemoryBytes,
 		string(svc.RestartPolicy), string(svc.PullPolicy), string(liveJSON),
-		string(readyJSON), string(autoJSON), svc.CreatedAt.Format(time.RFC3339), now,
+		string(readyJSON), autoJSON, svc.CreatedAt.Format(time.RFC3339), now,
 	)
 	return err
 }
@@ -315,7 +322,9 @@ func scanService(scanner interface {
 	}
 	if autoStr != "" && autoStr != "null" {
 		svc.Autoscale = &types.AutoScaleConfig{}
-		_ = json.Unmarshal([]byte(autoStr), svc.Autoscale)
+		if err := json.Unmarshal([]byte(autoStr), svc.Autoscale); err != nil {
+			return nil, fmt.Errorf("decode autoscale config for service %q: %w", svc.Name, err)
+		}
 	}
 	svc.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	svc.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
@@ -649,6 +658,63 @@ func (s *SQLiteStorage) InsertMetric(ctx context.Context, m *types.Metrics) erro
 		m.ID = id
 	}
 	return nil
+}
+
+func (s *SQLiteStorage) GetLatestMetrics(ctx context.Context, replicaID string, maxAgeSec int) (*types.Metrics, error) {
+	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeSec) * time.Second).Format(time.RFC3339)
+	var metric types.Metrics
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, replica_id, ts, cpu_cores, memory_bytes FROM metrics
+		 WHERE replica_id = ? AND ts >= ? ORDER BY ts DESC, id DESC LIMIT 1`,
+		replicaID, cutoff,
+	).Scan(&metric.ID, &metric.ReplicaID, &cutoff, &metric.CPUCores, &metric.MemoryBytes)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	metric.Timestamp, err = time.Parse(time.RFC3339, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("parse metric timestamp: %w", err)
+	}
+	return &metric, nil
+}
+
+func (s *SQLiteStorage) UpdateServiceReplicas(ctx context.Context, name string, replicas int) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE services SET replicas = ?, updated_at = ? WHERE name = ?`,
+		replicas, time.Now().UTC().Format(time.RFC3339), name,
+	)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("service %q not found", name)
+	}
+	return nil
+}
+
+func (s *SQLiteStorage) GetConfigValue(ctx context.Context, key string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM config WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
+func (s *SQLiteStorage) SetConfigValue(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO config (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, value,
+	)
+	return err
 }
 
 func (s *SQLiteStorage) PruneOldMetrics(ctx context.Context, olderThan time.Duration) error {

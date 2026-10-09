@@ -239,6 +239,26 @@ func (pm *ProxyManager) roundRobin(serviceName string) *atomic.Uint64 {
 	return counter
 }
 
+func (pm *ProxyManager) Unbind(port int) error {
+	pm.mu.Lock()
+	state, exists := pm.listeners[port]
+	if exists {
+		delete(pm.listeners, port)
+	}
+	delete(pm.bindLogs, port)
+	pm.mu.Unlock()
+	if !exists {
+		return nil
+	}
+	pm.cacheMu.Lock()
+	delete(pm.cache, state.serviceName)
+	pm.cacheMu.Unlock()
+	if err := state.listener.Close(); err != nil {
+		return fmt.Errorf("close proxy listener on port %d: %w", port, err)
+	}
+	return nil
+}
+
 func (pm *ProxyManager) getReadyBackends(ctx context.Context, serviceName string) ([]Backend, error) {
 	now := time.Now()
 	pm.cacheMu.Lock()

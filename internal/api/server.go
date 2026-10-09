@@ -25,6 +25,7 @@ type Server struct {
 	mux              *http.ServeMux
 	token            string
 	ports            *serviceports.Allocator
+	proxyManager     interface{ Unbind(int) error }
 	portAllocatorErr error
 	serviceMu        sync.Mutex
 }
@@ -53,6 +54,7 @@ func (s *Server) routes() {
 	// Token-protected node routes
 	s.mux.HandleFunc("POST /api/v1/nodes/register", s.auth(s.handleRegisterNode))
 	s.mux.HandleFunc("POST /api/v1/nodes/{name}/heartbeat", s.auth(s.handleHeartbeat))
+	s.mux.HandleFunc("POST /api/v1/metrics", s.auth(s.handleMetric))
 	s.mux.HandleFunc("GET /api/v1/work/{nodeName}", s.auth(s.handleWork))
 	s.mux.HandleFunc("GET /api/v1/nodes", s.auth(s.handleListNodes))
 	s.mux.HandleFunc("GET /api/v1/nodes/{name}", s.auth(s.handleGetNode))
@@ -90,6 +92,10 @@ func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
+}
+
+func (s *Server) SetProxyManager(manager interface{ Unbind(int) error }) {
+	s.proxyManager = manager
 }
 
 // Request/Response DTOs
@@ -139,18 +145,19 @@ type WorkReplica struct {
 }
 
 type CreateServiceRequest struct {
-	Name          string              `json:"name"`
-	Image         string              `json:"image"`
-	Replicas      int                 `json:"replicas"`
-	CPUMillis     int64               `json:"cpu_millis"`
-	MemoryBytes   int64               `json:"memory_bytes"`
-	ContainerPort int                 `json:"container_port"`
-	RestartPolicy types.RestartPolicy `json:"restart_policy,omitempty"`
-	PullPolicy    types.PullPolicy    `json:"pull_policy,omitempty"`
-	Env           map[string]string   `json:"env,omitempty"`
-	Command       []string            `json:"command,omitempty"`
-	Liveness      *types.Probe        `json:"liveness,omitempty"`
-	Readiness     *types.Probe        `json:"readiness,omitempty"`
+	Name          string                 `json:"name"`
+	Image         string                 `json:"image"`
+	Replicas      int                    `json:"replicas"`
+	CPUMillis     int64                  `json:"cpu_millis"`
+	MemoryBytes   int64                  `json:"memory_bytes"`
+	ContainerPort int                    `json:"container_port"`
+	RestartPolicy types.RestartPolicy    `json:"restart_policy,omitempty"`
+	PullPolicy    types.PullPolicy       `json:"pull_policy,omitempty"`
+	Env           map[string]string      `json:"env,omitempty"`
+	Command       []string               `json:"command,omitempty"`
+	Liveness      *types.Probe           `json:"liveness,omitempty"`
+	Readiness     *types.Probe           `json:"readiness,omitempty"`
+	Autoscale     *types.AutoScaleConfig `json:"autoscale,omitempty"`
 }
 
 type ReplicaSummary struct {
@@ -266,6 +273,7 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		Command:       req.Command,
 		Liveness:      req.Liveness,
 		Readiness:     req.Readiness,
+		Autoscale:     req.Autoscale,
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	}
@@ -326,6 +334,12 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.DeleteService(r.Context(), name); err != nil {
 		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if s.proxyManager != nil && service.ServicePort > 0 {
+		if err := s.proxyManager.Unbind(service.ServicePort); err != nil {
+			jsonError(w, "proxy listener error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	if s.ports != nil && service.ServicePort > 0 {
 		s.ports.Release(name, service.ServicePort)
@@ -719,6 +733,28 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+func (s *Server) handleMetric(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ReplicaID   string  `json:"replica_id"`
+		CPUCores    float64 `json:"cpu_cores"`
+		MemoryBytes int64   `json:"memory_bytes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
+		req.ReplicaID == "" || req.CPUCores < 0 || req.MemoryBytes < 0 {
+		jsonError(w, "invalid metric", http.StatusBadRequest)
+		return
+	}
+	metric := &types.Metrics{
+		ReplicaID: req.ReplicaID, Timestamp: time.Now().UTC(),
+		CPUCores: req.CPUCores, MemoryBytes: req.MemoryBytes,
+	}
+	if err := s.store.InsertMetric(r.Context(), metric); err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {

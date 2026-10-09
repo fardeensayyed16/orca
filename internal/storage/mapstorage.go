@@ -16,6 +16,7 @@ type MapStorage struct {
 	nodes    map[string]*types.Node
 	metrics  []*types.Metrics
 	token    string
+	config   map[string]string
 }
 
 type mapTx struct {
@@ -43,6 +44,7 @@ func NewMapStorage() *MapStorage {
 		replicas: make(map[string]*types.Replica),
 		nodes:    make(map[string]*types.Node),
 		metrics:  make([]*types.Metrics, 0),
+		config:   make(map[string]string),
 	}
 }
 
@@ -251,6 +253,46 @@ func (m *MapStorage) InsertMetric(ctx context.Context, metric *types.Metrics) er
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.metrics = append(m.metrics, metric)
+	return nil
+}
+
+func (m *MapStorage) GetLatestMetrics(ctx context.Context, replicaID string, maxAgeSec int) (*types.Metrics, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	cutoff := time.Now().UTC().Add(-time.Duration(maxAgeSec) * time.Second)
+	var latest *types.Metrics
+	for _, metric := range m.metrics {
+		if metric.ReplicaID == replicaID && !metric.Timestamp.Before(cutoff) &&
+			(latest == nil || metric.Timestamp.After(latest.Timestamp)) {
+			copy := *metric
+			latest = &copy
+		}
+	}
+	return latest, nil
+}
+
+func (m *MapStorage) UpdateServiceReplicas(ctx context.Context, name string, replicas int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	service, ok := m.services[name]
+	if !ok {
+		return fmt.Errorf("service %q not found", name)
+	}
+	service.Replicas = replicas
+	service.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+func (m *MapStorage) GetConfigValue(ctx context.Context, key string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.config[key], nil
+}
+
+func (m *MapStorage) SetConfigValue(ctx context.Context, key, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.config[key] = value
 	return nil
 }
 

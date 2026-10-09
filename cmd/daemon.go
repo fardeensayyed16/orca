@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fardeensayyed16/orca/internal/api"
+	"github.com/fardeensayyed16/orca/internal/autoscaler"
 	"github.com/fardeensayyed16/orca/internal/proxy"
 	"github.com/fardeensayyed16/orca/internal/reconciler"
 	"github.com/fardeensayyed16/orca/internal/serviceports"
@@ -83,6 +84,7 @@ var daemonCmd = &cobra.Command{
 
 		// 5. API Server (token-aware)
 		apiSrv := api.NewServer(store, token, servicePorts)
+		apiSrv.SetProxyManager(proxyMgr)
 		apiHTTP := &http.Server{
 			Addr:         bindAddr,
 			Handler:      apiSrv,
@@ -98,6 +100,23 @@ var daemonCmd = &cobra.Command{
 		haReconciler := reconciler.NewHAReconciler(store, 15*time.Second)
 		go haReconciler.Start(ctx)
 		log.Printf("HA reconciler started (interval 15s)")
+		hpa := autoscaler.NewAutoscaler(store, 30*time.Second)
+		go hpa.Run(ctx)
+		log.Printf("HPA started (interval 30s)")
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := store.PruneOldMetrics(ctx, time.Hour); err != nil {
+						log.Printf("Metrics pruning failed: %v", err)
+					}
+				}
+			}
+		}()
 
 		// 6. GUI Listener (stub; loopback only)
 		var guiHTTP *http.Server

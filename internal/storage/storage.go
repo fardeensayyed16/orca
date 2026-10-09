@@ -43,6 +43,10 @@ type Storage interface {
 
 	// Metric methods
 	InsertMetric(ctx context.Context, m *types.Metrics) error
+	GetLatestMetrics(ctx context.Context, replicaID string, maxAgeSec int) (*types.Metrics, error)
+	UpdateServiceReplicas(ctx context.Context, name string, replicas int) error
+	GetConfigValue(ctx context.Context, key string) (string, error)
+	SetConfigValue(ctx context.Context, key, value string) error
 	PruneOldMetrics(ctx context.Context, olderThan time.Duration) error
 
 	// Config / Token methods
