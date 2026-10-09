@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/fardeensayyed16/orca/internal/scheduler"
@@ -49,6 +51,7 @@ func (s *Server) routes() {
 	// Token-protected service and pod routes
 	s.mux.HandleFunc("POST /api/v1/services", s.auth(s.handleCreateService))
 	s.mux.HandleFunc("GET /api/v1/services", s.auth(s.handleListServices))
+	s.mux.HandleFunc("GET /api/v1/services/{name}/endpoints", s.auth(s.handleServiceEndpoints))
 	s.mux.HandleFunc("GET /api/v1/pods", s.auth(s.handleListPods))
 
 	// token/show — loopback / auth
@@ -119,6 +122,8 @@ type WorkReplica struct {
 	PullPolicy          types.PullPolicy    `json:"pull_policy,omitempty"`
 	Env                 map[string]string   `json:"env,omitempty"`
 	Command             []string            `json:"command,omitempty"`
+	Liveness            *types.Probe        `json:"liveness,omitempty"`
+	Readiness           *types.Probe        `json:"readiness,omitempty"`
 }
 
 type CreateServiceRequest struct {
@@ -132,6 +137,8 @@ type CreateServiceRequest struct {
 	PullPolicy    types.PullPolicy    `json:"pull_policy,omitempty"`
 	Env           map[string]string   `json:"env,omitempty"`
 	Command       []string            `json:"command,omitempty"`
+	Liveness      *types.Probe        `json:"liveness,omitempty"`
+	Readiness     *types.Probe        `json:"readiness,omitempty"`
 }
 
 type ReplicaSummary struct {
@@ -189,6 +196,14 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "pull_policy must be IfNotPresent, Always, or Never", http.StatusBadRequest)
 		return
 	}
+	if err := normalizeProbe(req.Liveness, "liveness", req.ContainerPort); err != nil {
+		jsonError(w, "invalid liveness probe: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := normalizeProbe(req.Readiness, "readiness", req.ContainerPort); err != nil {
+		jsonError(w, "invalid readiness probe: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	existing, err := s.store.GetService(r.Context(), req.Name)
 	if err != nil {
@@ -217,6 +232,8 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 		PullPolicy:    req.PullPolicy,
 		Env:           req.Env,
 		Command:       req.Command,
+		Liveness:      req.Liveness,
+		Readiness:     req.Readiness,
 		CreatedAt:     time.Now().UTC(),
 		UpdatedAt:     time.Now().UTC(),
 	}
@@ -255,6 +272,126 @@ func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(CreateServiceResponse{Service: service, Replicas: replicas})
+}
+
+func normalizeProbe(probe *types.Probe, kind string, containerPort int) error {
+	if probe == nil {
+		return nil
+	}
+	if probe.Kind == "" {
+		probe.Kind = kind
+	}
+	if probe.Kind != kind {
+		return fmt.Errorf("kind must be %q", kind)
+	}
+	switch probe.Type {
+	case "http":
+		if containerPort == 0 {
+			return errors.New("HTTP probes require a published container_port")
+		}
+		if probe.Port != 0 && probe.Port != containerPort {
+			return fmt.Errorf("HTTP probe port must match container_port %d", containerPort)
+		}
+		probe.Port = containerPort
+		if probe.Path == "" {
+			probe.Path = "/"
+		}
+		if !strings.HasPrefix(probe.Path, "/") {
+			return errors.New("HTTP probe path must begin with '/'")
+		}
+	case "tcp":
+		if containerPort == 0 {
+			return errors.New("TCP probes require a published container_port")
+		}
+		if probe.Port != 0 && probe.Port != containerPort {
+			return fmt.Errorf("TCP probe port must match container_port %d", containerPort)
+		}
+		probe.Port = containerPort
+	case "exec":
+		if len(probe.Command) == 0 || strings.TrimSpace(probe.Command[0]) == "" {
+			return errors.New("exec probes require a command")
+		}
+	default:
+		return errors.New("type must be http, tcp, or exec")
+	}
+	if probe.InitialDelaySeconds < 0 {
+		return errors.New("initial_delay_seconds cannot be negative")
+	}
+	if probe.PeriodSeconds == 0 {
+		probe.PeriodSeconds = 10
+	}
+	if probe.PeriodSeconds < 1 {
+		return errors.New("period_seconds must be positive")
+	}
+	if probe.TimeoutSeconds == 0 {
+		probe.TimeoutSeconds = 1
+	}
+	if probe.TimeoutSeconds < 1 {
+		return errors.New("timeout_seconds must be positive")
+	}
+	if probe.FailureThreshold == 0 {
+		probe.FailureThreshold = 3
+	}
+	if probe.FailureThreshold < 1 {
+		return errors.New("failure_threshold must be positive")
+	}
+	if probe.SuccessThreshold == 0 {
+		probe.SuccessThreshold = 1
+	}
+	if probe.SuccessThreshold < 1 {
+		return errors.New("success_threshold must be positive")
+	}
+	return nil
+}
+
+type ServiceEndpoint struct {
+	ReplicaID   string `json:"replica_id"`
+	NodeAddress string `json:"node_address"`
+	HostPort    int    `json:"host_port"`
+}
+
+func (s *Server) handleServiceEndpoints(w http.ResponseWriter, r *http.Request) {
+	serviceName := r.PathValue("name")
+	service, err := s.store.GetService(r.Context(), serviceName)
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if service == nil {
+		jsonError(w, "service not found", http.StatusNotFound)
+		return
+	}
+	replicas, err := s.store.ListReplicasByService(r.Context(), serviceName)
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	nodes, err := s.store.ListNodes(r.Context())
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	nodesByName := make(map[string]*types.Node, len(nodes))
+	for _, node := range nodes {
+		nodesByName[node.Name] = node
+	}
+	endpoints := make([]ServiceEndpoint, 0)
+	for _, replica := range replicas {
+		if replica.Status != types.PodStatusRunning ||
+			replica.Health != types.HealthStatusHealthy ||
+			!replica.Ready || replica.HostPort <= 0 {
+			continue
+		}
+		node := nodesByName[replica.NodeName]
+		if node == nil || node.Status != "Ready" {
+			continue
+		}
+		endpoints = append(endpoints, ServiceEndpoint{
+			ReplicaID: replica.ID, NodeAddress: node.Address, HostPort: replica.HostPort,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(endpoints)
 }
 
 func newReplicaID() (string, error) {
@@ -535,6 +672,8 @@ func (s *Server) handleWork(w http.ResponseWriter, r *http.Request) {
 			PullPolicy:          service.PullPolicy,
 			Env:                 service.Env,
 			Command:             service.Command,
+			Liveness:            service.Liveness,
+			Readiness:           service.Readiness,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")

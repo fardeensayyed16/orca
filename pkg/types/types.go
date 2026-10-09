@@ -36,84 +36,73 @@ const (
 	PodStatusCompleted PodStatus = "Completed"
 )
 
-type TCPSocketAction struct {
-	Port int `json:"port"`
-}
-
-type HTTPGetAction struct {
-	Path string `json:"path"`
-	Port int    `json:"port"`
-}
-
-type ExecAction struct {
-	Command []string `json:"command"`
-}
-
 type Probe struct {
-	HTTPGet             *HTTPGetAction   `json:"http_get,omitempty"`
-	TCPSocket           *TCPSocketAction `json:"tcp_socket,omitempty"`
-	Exec                *ExecAction      `json:"exec,omitempty"`
-	InitialDelaySeconds int              `json:"initial_delay_seconds,omitempty"`
-	PeriodSeconds       int              `json:"period_seconds,omitempty"`
-	TimeoutSeconds      int              `json:"timeout_seconds,omitempty"`
-	FailureThreshold    int              `json:"failure_threshold,omitempty"`
-	SuccessThreshold    int              `json:"success_threshold,omitempty"`
+	Kind                string   `json:"kind"`
+	Type                string   `json:"type"`
+	Path                string   `json:"path,omitempty"`
+	Port                int      `json:"port,omitempty"`
+	Command             []string `json:"command,omitempty"`
+	InitialDelaySeconds int      `json:"initial_delay_seconds,omitempty"`
+	PeriodSeconds       int      `json:"period_seconds,omitempty"`
+	TimeoutSeconds      int      `json:"timeout_seconds,omitempty"`
+	FailureThreshold    int      `json:"failure_threshold,omitempty"`
+	SuccessThreshold    int      `json:"success_threshold,omitempty"`
 }
 
 type AutoScaleConfig struct {
-	Min                      int     `json:"min"`
-	Max                      int     `json:"max"`
-	TargetCPU                float64 `json:"target_cpu"`
-	ScaleDownWindowSeconds   int     `json:"scale_down_window_seconds"`
-	Tolerance                float64 `json:"tolerance"`
+	Min                    int     `json:"min"`
+	Max                    int     `json:"max"`
+	TargetCPU              float64 `json:"target_cpu"`
+	ScaleDownWindowSeconds int     `json:"scale_down_window_seconds"`
+	Tolerance              float64 `json:"tolerance"`
 }
 
 type Service struct {
-	Name           string            `json:"name"`
-	Image          string            `json:"image"`
-	Replicas       int               `json:"replicas"`
-	ContainerPort  int               `json:"container_port,omitempty"`
-	ServicePort    int               `json:"service_port,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
-	Command        []string          `json:"command,omitempty"`
-	CPUMillis      int64             `json:"cpu_millis,omitempty"`
-	MemoryBytes    int64             `json:"memory_bytes,omitempty"`
-	RestartPolicy  RestartPolicy     `json:"restart_policy,omitempty"`
-	PullPolicy     PullPolicy        `json:"pull_policy,omitempty"`
-	LivenessProbe  *Probe            `json:"liveness_probe,omitempty"`
-	ReadinessProbe *Probe            `json:"readiness_probe,omitempty"`
-	Autoscale      *AutoScaleConfig  `json:"autoscale,omitempty"`
-	CreatedAt      time.Time         `json:"created_at"`
-	UpdatedAt      time.Time         `json:"updatedAt"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	Replicas      int               `json:"replicas"`
+	ContainerPort int               `json:"container_port,omitempty"`
+	ServicePort   int               `json:"service_port,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
+	Command       []string          `json:"command,omitempty"`
+	CPUMillis     int64             `json:"cpu_millis,omitempty"`
+	MemoryBytes   int64             `json:"memory_bytes,omitempty"`
+	RestartPolicy RestartPolicy     `json:"restart_policy,omitempty"`
+	PullPolicy    PullPolicy        `json:"pull_policy,omitempty"`
+	Liveness      *Probe            `json:"liveness,omitempty"`
+	Readiness     *Probe            `json:"readiness,omitempty"`
+	Autoscale     *AutoScaleConfig  `json:"autoscale,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updatedAt"`
 }
 
 type Replica struct {
-	ID               string       `json:"id"`
-	ServiceName      string       `json:"service_name"`
-	NodeName         string       `json:"node_name,omitempty"`
-	ContainerID      string       `json:"container_id,omitempty"`
-	HostPort         int          `json:"host_port,omitempty"`
-	Status           PodStatus    `json:"status"`
-	Health           HealthStatus `json:"health"`
-	Ready            bool         `json:"ready"`
-	RestartCount     int          `json:"restart_count"`
-	RescheduleCount  int          `json:"reschedule_count"`
-	LastRescheduledAt *time.Time  `json:"last_rescheduled_at,omitempty"`
-	ExitCode         int          `json:"exit_code"`
-	Message          string       `json:"message,omitempty"`
-	CreatedAt        time.Time    `json:"created_at"`
-	StartedAt        *time.Time   `json:"started_at,omitempty"`
+	ID                string       `json:"id"`
+	ServiceName       string       `json:"service_name"`
+	NodeName          string       `json:"node_name,omitempty"`
+	ContainerID       string       `json:"container_id,omitempty"`
+	HostPort          int          `json:"host_port,omitempty"`
+	Status            PodStatus    `json:"status"`
+	Health            HealthStatus `json:"health"`
+	Ready             bool         `json:"ready"`
+	RestartCount      int          `json:"restart_count"`
+	RescheduleCount   int          `json:"reschedule_count"`
+	LastRescheduledAt *time.Time   `json:"last_rescheduled_at,omitempty"`
+	ExitCode          int          `json:"exit_code"`
+	Message           string       `json:"message,omitempty"`
+	CreatedAt         time.Time    `json:"created_at"`
+	StartedAt         *time.Time   `json:"started_at,omitempty"`
 }
 
 type Node struct {
-	Name                 string    `json:"name"`
-	Address              string    `json:"address"`
-	CapacityCPUMillis    int64     `json:"capacity_cpu_millis"`
-	CapacityMemoryBytes  int64     `json:"capacity_memory_bytes"`
-	Status               string    `json:"status"` // Ready | NotReady | Deleting
-	LastSeen             time.Time `json:"last_seen"`
-	NotReadySince        *time.Time`json:"not_ready_since,omitempty"`
-	DockerOK             bool      `json:"docker_ok"`
+	Name                string     `json:"name"`
+	Address             string     `json:"address"`
+	CapacityCPUMillis   int64      `json:"capacity_cpu_millis"`
+	CapacityMemoryBytes int64      `json:"capacity_memory_bytes"`
+	Status              string     `json:"status"` // Ready | NotReady | Deleting
+	LastSeen            time.Time  `json:"last_seen"`
+	NotReadySince       *time.Time `json:"not_ready_since,omitempty"`
+	DockerOK            bool       `json:"docker_ok"`
 }
 
 type Metrics struct {

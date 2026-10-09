@@ -190,8 +190,8 @@ func (t *sqliteTx) UpdateReplicaNode(ctx context.Context, id, nodeName string) e
 func (s *SQLiteStorage) DeployService(ctx context.Context, svc *types.Service) error {
 	envJSON, _ := json.Marshal(svc.Env)
 	cmdJSON, _ := json.Marshal(svc.Command)
-	liveJSON, _ := json.Marshal(svc.LivenessProbe)
-	readyJSON, _ := json.Marshal(svc.ReadinessProbe)
+	liveJSON, _ := json.Marshal(svc.Liveness)
+	readyJSON, _ := json.Marshal(svc.Readiness)
 	autoJSON, _ := json.Marshal(svc.Autoscale)
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -295,12 +295,12 @@ func scanService(scanner interface {
 	_ = json.Unmarshal([]byte(envStr), &svc.Env)
 	_ = json.Unmarshal([]byte(cmdStr), &svc.Command)
 	if liveStr != "" && liveStr != "null" {
-		svc.LivenessProbe = &types.Probe{}
-		_ = json.Unmarshal([]byte(liveStr), svc.LivenessProbe)
+		svc.Liveness = &types.Probe{}
+		_ = json.Unmarshal([]byte(liveStr), svc.Liveness)
 	}
 	if readyStr != "" && readyStr != "null" {
-		svc.ReadinessProbe = &types.Probe{}
-		_ = json.Unmarshal([]byte(readyStr), svc.ReadinessProbe)
+		svc.Readiness = &types.Probe{}
+		_ = json.Unmarshal([]byte(readyStr), svc.Readiness)
 	}
 	if autoStr != "" && autoStr != "null" {
 		svc.Autoscale = &types.AutoScaleConfig{}
