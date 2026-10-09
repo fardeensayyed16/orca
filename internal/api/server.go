@@ -508,8 +508,10 @@ func (s *Server) handleRegisterNode(w http.ResponseWriter, r *http.Request) {
 			existing.CapacityMemoryBytes = req.CapacityMemoryBytes
 		}
 		existing.LastSeen = time.Now().UTC()
-		existing.Status = "Ready"
-		existing.NotReadySince = nil
+		if existing.Status != "Deleting" {
+			existing.Status = "Ready"
+			existing.NotReadySince = nil
+		}
 		existing.DockerOK = true
 
 		if err := s.store.UpsertNode(r.Context(), existing); err != nil {
@@ -701,35 +703,45 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "node name required", http.StatusBadRequest)
 		return
 	}
-	// For D1 / node deletion in Phase 4
-	nodes, err := s.store.ListNodes(r.Context())
-	if err != nil {
-		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var found bool
-	for _, n := range nodes {
-		if n.Name == nodeName {
-			found = true
-			break
-		}
-	}
-	if !found {
-		jsonError(w, "node not found", http.StatusNotFound)
-		return
-	}
-
 	node, err := s.store.GetNode(r.Context(), nodeName)
 	if err != nil {
 		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if node == nil {
+		jsonError(w, "node not found", http.StatusNotFound)
+		return
+	}
+	replicas, err := s.store.ListReplicas(r.Context())
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	hasReplicas := false
+	for _, replica := range replicas {
+		if replica.NodeName == nodeName {
+			hasReplicas = true
+			break
+		}
+	}
+	if !hasReplicas {
+		if err := s.store.DeleteNode(r.Context(), nodeName); err != nil {
+			jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	node.Status = "Deleting"
+	if node.NotReadySince == nil {
+		now := time.Now().UTC()
+		node.NotReadySince = &now
+	}
 	if err := s.store.UpsertNode(r.Context(), node); err != nil {
 		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {

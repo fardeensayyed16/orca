@@ -35,6 +35,7 @@ type Storage interface {
 	ListNodes(ctx context.Context) ([]*types.Node, error)
 	GetNode(ctx context.Context, name string) (*types.Node, error)
 	UpsertNode(ctx context.Context, node *types.Node) error
+	DeleteNode(ctx context.Context, name string) error
 	MarkNodeReady(ctx context.Context, name string) error
 	MarkNodeNotReady(ctx context.Context, name string) error
 	RecordHeartbeat(ctx context.Context, name string, dockerOK bool) error

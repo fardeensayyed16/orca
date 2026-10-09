@@ -89,6 +89,9 @@ var daemonCmd = &cobra.Command{
 				log.Fatalf("API server: %v", err)
 			}
 		}()
+		haReconciler := reconciler.NewHAReconciler(store, 15*time.Second)
+		go haReconciler.Start(ctx)
+		log.Printf("HA reconciler started (interval 15s)")
 
 		// 6. GUI Listener (stub; loopback only)
 		var guiHTTP *http.Server

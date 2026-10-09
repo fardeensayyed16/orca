@@ -149,7 +149,20 @@ func (m *MapStorage) DeleteReplica(ctx context.Context, id string) error {
 func (m *MapStorage) UpsertNode(ctx context.Context, node *types.Node) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if existing, ok := m.nodes[node.Name]; ok && existing.Status == "Deleting" && node.Status != "Deleting" {
+		node.Status = "Deleting"
+		if node.NotReadySince == nil {
+			node.NotReadySince = existing.NotReadySince
+		}
+	}
 	m.nodes[node.Name] = node
+	return nil
+}
+
+func (m *MapStorage) DeleteNode(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.nodes, name)
 	return nil
 }
 
@@ -201,9 +214,11 @@ func (m *MapStorage) RecordHeartbeat(ctx context.Context, name string, dockerOK 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if n, ok := m.nodes[name]; ok {
-		n.Status = "Ready"
+		if n.Status != "Deleting" {
+			n.Status = "Ready"
+			n.NotReadySince = nil
+		}
 		n.LastSeen = time.Now().UTC()
-		n.NotReadySince = nil
 		n.DockerOK = dockerOK
 	}
 	return nil

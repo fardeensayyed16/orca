@@ -32,6 +32,7 @@ const (
 	PodStatusPending   PodStatus = "Pending"
 	PodStatusStarting  PodStatus = "Starting"
 	PodStatusRunning   PodStatus = "Running"
+	PodStatusUnknown   PodStatus = "Unknown"
 	PodStatusFailed    PodStatus = "Failed"
 	PodStatusCompleted PodStatus = "Completed"
 )

@@ -481,9 +481,9 @@ func (s *SQLiteStorage) UpsertNode(ctx context.Context, node *types.Node) error 
 		address=excluded.address,
 		capacity_cpu_millis=excluded.capacity_cpu_millis,
 		capacity_memory_bytes=excluded.capacity_memory_bytes,
-		status=excluded.status,
+		status=CASE WHEN nodes.status = 'Deleting' THEN nodes.status ELSE excluded.status END,
 		last_seen=excluded.last_seen,
-		not_ready_since=excluded.not_ready_since,
+		not_ready_since=CASE WHEN nodes.status = 'Deleting' THEN COALESCE(nodes.not_ready_since, excluded.not_ready_since) ELSE excluded.not_ready_since END,
 		docker_ok=excluded.docker_ok;
 	`
 	_, err := s.db.ExecContext(ctx, query,
@@ -544,6 +544,11 @@ func (s *SQLiteStorage) GetNode(ctx context.Context, name string) (*types.Node, 
 	return n, err
 }
 
+func (s *SQLiteStorage) DeleteNode(ctx context.Context, name string) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM nodes WHERE name = ?", name)
+	return err
+}
+
 func (s *SQLiteStorage) MarkNodeReady(ctx context.Context, name string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	query := `UPDATE nodes SET status = 'Ready', last_seen = ?, not_ready_since = NULL WHERE name = ?`
@@ -564,7 +569,10 @@ func (s *SQLiteStorage) RecordHeartbeat(ctx context.Context, name string, docker
 	if dockerOK {
 		dockerOKInt = 1
 	}
-	query := `UPDATE nodes SET last_seen = ?, status = 'Ready', not_ready_since = NULL, docker_ok = ? WHERE name = ?`
+	query := `UPDATE nodes SET last_seen = ?,
+		status = CASE WHEN status = 'Deleting' THEN status ELSE 'Ready' END,
+		not_ready_since = CASE WHEN status = 'Deleting' THEN not_ready_since ELSE NULL END,
+		docker_ok = ? WHERE name = ?`
 	_, err := s.db.ExecContext(ctx, query, now, dockerOKInt, name)
 	return err
 }

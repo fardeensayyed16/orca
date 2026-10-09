@@ -115,4 +115,34 @@ func testStorage(t *testing.T, store Storage) {
 	if err := store.PruneOldMetrics(ctx, 1*time.Hour); err != nil {
 		t.Fatalf("PruneOldMetrics error: %v", err)
 	}
+
+	now := time.Now().UTC()
+	node.Status = "Deleting"
+	node.NotReadySince = &now
+	if err := store.UpsertNode(ctx, node); err != nil {
+		t.Fatalf("mark node deleting: %v", err)
+	}
+	reregisteredNode := *node
+	reregisteredNode.Status = "Ready"
+	reregisteredNode.NotReadySince = nil
+	if err := store.UpsertNode(ctx, &reregisteredNode); err != nil {
+		t.Fatalf("upsert deleting node heartbeat: %v", err)
+	}
+	if err := store.RecordHeartbeat(ctx, node.Name, true); err != nil {
+		t.Fatalf("RecordHeartbeat on deleting node: %v", err)
+	}
+	deletingNode, err := store.GetNode(ctx, node.Name)
+	if err != nil {
+		t.Fatalf("GetNode after deleting heartbeat: %v", err)
+	}
+	if deletingNode == nil || deletingNode.Status != "Deleting" || deletingNode.NotReadySince == nil {
+		t.Fatalf("heartbeat cancelled node deletion: %+v", deletingNode)
+	}
+	if err := store.DeleteNode(ctx, node.Name); err != nil {
+		t.Fatalf("DeleteNode error: %v", err)
+	}
+	deletingNode, err = store.GetNode(ctx, node.Name)
+	if err != nil || deletingNode != nil {
+		t.Fatalf("DeleteNode failed: node=%+v err=%v", deletingNode, err)
+	}
 }
