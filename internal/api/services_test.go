@@ -65,3 +65,47 @@ func TestCreateServiceAndListPods(t *testing.T) {
 		t.Fatalf("GET services returned status %d and data %+v", servicesResponse.Code, services)
 	}
 }
+
+func TestScaleService(t *testing.T) {
+	store := storage.NewMapStorage()
+	service := &types.Service{Name: "web", Image: "nginx", Replicas: 1}
+	if err := store.DeployService(nil, service); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(store, testToken)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/services/web/scale", bytes.NewBufferString(`{"replicas":3}`))
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	response := httptest.NewRecorder()
+	srv.ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("PATCH scale: got %d: %s", response.Code, response.Body.String())
+	}
+	var updated types.Service
+	if err := json.Unmarshal(response.Body.Bytes(), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Replicas != 3 || updated.Name != "web" {
+		t.Fatalf("scaled service = %+v, want replicas 3", updated)
+	}
+
+	for _, test := range []struct {
+		name   string
+		path   string
+		body   string
+		status int
+	}{
+		{name: "invalid replicas", path: "/api/v1/services/web/scale", body: `{"replicas":0}`, status: http.StatusBadRequest},
+		{name: "unknown service", path: "/api/v1/services/missing/scale", body: `{"replicas":2}`, status: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPatch, test.path, bytes.NewBufferString(test.body))
+			req.Header.Set("Authorization", "Bearer "+testToken)
+			response := httptest.NewRecorder()
+			srv.ServeHTTP(response, req)
+			if response.Code != test.status {
+				t.Fatalf("PATCH scale: got %d, want %d: %s", response.Code, test.status, response.Body.String())
+			}
+		})
+	}
+}

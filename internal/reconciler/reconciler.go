@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/fardeensayyed16/orca/internal/scheduler"
@@ -70,6 +71,10 @@ func (r *HAReconciler) Reconcile(ctx context.Context) error {
 		servicesByName[service.Name] = service
 	}
 
+	replicas, err = r.scaleDownReplicas(ctx, services, replicas)
+	if err != nil {
+		return err
+	}
 	if err := r.ensureDesiredReplicas(ctx, services, replicas); err != nil {
 		return err
 	}
@@ -152,6 +157,64 @@ func (r *HAReconciler) Reconcile(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (r *HAReconciler) scaleDownReplicas(ctx context.Context, services []*types.Service, replicas []*types.Replica) ([]*types.Replica, error) {
+	kept := make([]*types.Replica, 0, len(replicas))
+	serviceNames := make(map[string]struct{}, len(services))
+	for _, service := range services {
+		serviceNames[service.Name] = struct{}{}
+		serviceReplicas := make([]*types.Replica, 0)
+		for _, replica := range replicas {
+			if replica.ServiceName == service.Name {
+				serviceReplicas = append(serviceReplicas, replica)
+			}
+		}
+		if len(serviceReplicas) <= service.Replicas {
+			kept = append(kept, serviceReplicas...)
+			continue
+		}
+
+		sort.SliceStable(serviceReplicas, func(i, j int) bool {
+			left, right := serviceReplicas[i], serviceReplicas[j]
+			leftPriority, rightPriority := scaleDownPriority(left), scaleDownPriority(right)
+			if leftPriority != rightPriority {
+				return leftPriority < rightPriority
+			}
+			if left.StartedAt == nil {
+				return false
+			}
+			if right.StartedAt == nil {
+				return true
+			}
+			return left.StartedAt.After(*right.StartedAt)
+		})
+
+		victimCount := len(serviceReplicas) - service.Replicas
+		for _, victim := range serviceReplicas[:victimCount] {
+			if err := r.store.DeleteReplica(ctx, victim.ID); err != nil {
+				return nil, fmt.Errorf("delete scaled-down replica %q for service %q: %w", victim.ID, service.Name, err)
+			}
+			log.Printf("scaled down replica %s for service %s", victim.ID, service.Name)
+		}
+		kept = append(kept, serviceReplicas[victimCount:]...)
+	}
+	for _, replica := range replicas {
+		if _, exists := serviceNames[replica.ServiceName]; !exists {
+			kept = append(kept, replica)
+		}
+	}
+	return kept, nil
+}
+
+func scaleDownPriority(replica *types.Replica) int {
+	if replica.Status == types.PodStatusPending {
+		return 0
+	}
+	if !replica.Ready {
+		return 1
+	}
+	return 2
 }
 
 func (r *HAReconciler) ensureDesiredReplicas(ctx context.Context, services []*types.Service, replicas []*types.Replica) error {

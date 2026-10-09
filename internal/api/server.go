@@ -61,12 +61,13 @@ func (s *Server) routes() {
 	// Token-protected service and pod routes
 	s.mux.HandleFunc("POST /api/v1/services", s.auth(s.handleCreateService))
 	s.mux.HandleFunc("GET /api/v1/services", s.auth(s.handleListServices))
+	s.mux.HandleFunc("PATCH /api/v1/services/{name}/scale", s.auth(s.handleScaleService))
 	s.mux.HandleFunc("DELETE /api/v1/services/{name}", s.auth(s.handleDeleteService))
 	s.mux.HandleFunc("GET /api/v1/services/{name}/endpoints", s.auth(s.handleServiceEndpoints))
 	s.mux.HandleFunc("GET /api/v1/pods", s.auth(s.handleListPods))
 
-	// token/show — loopback / auth
-	s.mux.HandleFunc("POST /api/v1/token/show", s.auth(s.handleTokenShow))
+	// token/show is restricted to loopback callers instead of bearer-token auth.
+	s.mux.HandleFunc("POST /api/v1/token/show", loopbackOnly(s.handleTokenShow))
 }
 
 func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
@@ -330,6 +331,42 @@ func (s *Server) handleDeleteService(w http.ResponseWriter, r *http.Request) {
 		s.ports.Release(name, service.ServicePort)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleScaleService(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Replicas int `json:"replicas"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Replicas <= 0 {
+		jsonError(w, "replicas must be greater than zero", http.StatusBadRequest)
+		return
+	}
+
+	s.serviceMu.Lock()
+	defer s.serviceMu.Unlock()
+
+	service, err := s.store.GetService(r.Context(), r.PathValue("name"))
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if service == nil {
+		jsonError(w, "service not found", http.StatusNotFound)
+		return
+	}
+	service.Replicas = req.Replicas
+	service.UpdatedAt = time.Now().UTC()
+	if err := s.store.DeployService(r.Context(), service); err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(service)
 }
 
 func normalizeProbe(probe *types.Probe, kind string, containerPort int) error {

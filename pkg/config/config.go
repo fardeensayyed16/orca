@@ -54,6 +54,11 @@ func InitConfig(cmd *cobra.Command) error {
 	v.SetConfigType("yaml")
 	v.AddConfigPath(filepath.Join(home, ".orca"))
 	v.AddConfigPath(".")
+	if cmd != nil && cmd.Root() != nil {
+		if configFlag := cmd.Root().PersistentFlags().Lookup("config"); configFlag != nil && configFlag.Changed {
+			v.SetConfigFile(configFlag.Value.String())
+		}
+	}
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -78,13 +83,17 @@ func InitConfig(cmd *cobra.Command) error {
 		return fmt.Errorf("unable to decode into config struct: %w", err)
 	}
 
-	// Direct fallback check on root flags if viper didn't populate struct
 	if cmd != nil && cmd.Root() != nil {
-		if f := cmd.Root().PersistentFlags().Lookup("server"); f != nil && f.Changed {
+		rootFlags := cmd.Root().PersistentFlags()
+		if f := rootFlags.Lookup("server"); f != nil && f.Changed {
 			GlobalConfig.Client.Server = f.Value.String()
+		} else if value, ok := os.LookupEnv("ORCA_SERVER"); ok {
+			GlobalConfig.Client.Server = value
 		}
-		if f := cmd.Root().PersistentFlags().Lookup("token"); f != nil && f.Changed {
+		if f := rootFlags.Lookup("token"); f != nil && f.Changed {
 			GlobalConfig.Client.Token = f.Value.String()
+		} else if value, ok := os.LookupEnv("ORCA_TOKEN"); ok {
+			GlobalConfig.Client.Token = value
 		}
 	}
 

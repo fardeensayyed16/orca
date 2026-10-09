@@ -171,3 +171,54 @@ func TestReconcileCreatesMissingDesiredReplicas(t *testing.T) {
 		}
 	}
 }
+
+func TestReconcileScalesDownReplicasByPriority(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMapStorage()
+	if err := store.DeployService(ctx, &types.Service{Name: "web", Image: "nginx", Replicas: 3}); err != nil {
+		t.Fatal(err)
+	}
+	oldStarted := time.Now().UTC().Add(-time.Hour)
+	newStarted := time.Now().UTC()
+	replicas := []*types.Replica{
+		{ID: "pending", ServiceName: "web", Status: types.PodStatusPending},
+		{ID: "not-ready-old", ServiceName: "web", Status: types.PodStatusRunning, StartedAt: &oldStarted},
+		{ID: "not-ready-new", ServiceName: "web", Status: types.PodStatusRunning, StartedAt: &newStarted},
+		{ID: "ready-old", ServiceName: "web", Status: types.PodStatusRunning, Ready: true, StartedAt: &oldStarted},
+		{ID: "ready-new", ServiceName: "web", Status: types.PodStatusRunning, Ready: true, StartedAt: &newStarted},
+	}
+	for _, replica := range replicas {
+		if err := store.UpsertReplica(ctx, replica); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := NewHAReconciler(store, time.Second).Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ListReplicas(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("replica count = %d, want 3", len(got))
+	}
+	for _, id := range []string{"pending", "not-ready-new"} {
+		replica, err := store.GetReplica(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if replica != nil {
+			t.Errorf("scale-down victim %q still exists", id)
+		}
+	}
+	for _, id := range []string{"not-ready-old", "ready-old", "ready-new"} {
+		replica, err := store.GetReplica(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if replica == nil {
+			t.Errorf("expected replica %q to remain", id)
+		}
+	}
+}

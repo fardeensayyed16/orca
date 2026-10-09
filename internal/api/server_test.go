@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -77,5 +79,37 @@ func TestNodes_CorrectToken_Returns200(t *testing.T) {
 	srv.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("nodes with correct token: want 200 got %d", w.Code)
+	}
+}
+
+func TestTokenShow_LoopbackOnly(t *testing.T) {
+	store := storage.NewMapStorage()
+	if err := store.SetToken(context.Background(), "secret-token"); err != nil {
+		t.Fatal(err)
+	}
+	srv := NewServer(store, testToken)
+
+	loopback := httptest.NewRequest(http.MethodPost, "/api/v1/token/show", nil)
+	loopback.RemoteAddr = "127.0.0.1:1234"
+	response := httptest.NewRecorder()
+	srv.ServeHTTP(response, loopback)
+	if response.Code != http.StatusOK {
+		t.Fatalf("loopback token/show: want 200 got %d", response.Code)
+	}
+	var result map[string]string
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["token"] != "secret-token" {
+		t.Fatalf("token/show returned %q", result["token"])
+	}
+
+	remote := httptest.NewRequest(http.MethodPost, "/api/v1/token/show", nil)
+	remote.RemoteAddr = "192.0.2.1:1234"
+	remote.Header.Set("Authorization", "Bearer "+testToken)
+	response = httptest.NewRecorder()
+	srv.ServeHTTP(response, remote)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("remote token/show: want 403 got %d", response.Code)
 	}
 }
