@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -17,10 +18,24 @@ type MapStorage struct {
 	token    string
 }
 
-type mapTx struct{}
+type mapTx struct {
+	store *MapStorage
+}
 
 func (m *mapTx) Commit() error   { return nil }
 func (m *mapTx) Rollback() error { return nil }
+func (m *mapTx) ListServices(ctx context.Context) ([]*types.Service, error) {
+	return m.store.ListServices(ctx)
+}
+func (m *mapTx) ListNodes(ctx context.Context) ([]*types.Node, error) {
+	return m.store.ListNodes(ctx)
+}
+func (m *mapTx) ListReplicas(ctx context.Context) ([]*types.Replica, error) {
+	return m.store.ListReplicas(ctx)
+}
+func (m *mapTx) UpdateReplicaNode(ctx context.Context, id, nodeName string) error {
+	return m.store.UpdateReplicaNode(ctx, id, nodeName)
+}
 
 func NewMapStorage() *MapStorage {
 	return &MapStorage{
@@ -36,7 +51,7 @@ func (m *MapStorage) Close() error {
 }
 
 func (m *MapStorage) WithTx(ctx context.Context, fn func(tx Tx) error) error {
-	return fn(&mapTx{})
+	return fn(&mapTx{store: m})
 }
 
 func (m *MapStorage) DeployService(ctx context.Context, svc *types.Service) error {
@@ -88,6 +103,30 @@ func (m *MapStorage) ListReplicas(ctx context.Context) ([]*types.Replica, error)
 		list = append(list, r)
 	}
 	return list, nil
+}
+
+func (m *MapStorage) ListReplicasByService(ctx context.Context, serviceName string) ([]*types.Replica, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var list []*types.Replica
+	for _, r := range m.replicas {
+		if r.ServiceName == serviceName {
+			list = append(list, r)
+		}
+	}
+	return list, nil
+}
+
+func (m *MapStorage) UpdateReplicaNode(ctx context.Context, id, nodeName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.replicas[id]
+	if !ok || r.Status != types.PodStatusPending {
+		return fmt.Errorf("replica %q not found or not pending", id)
+	}
+	r.NodeName = nodeName
+	r.Status = types.PodStatusStarting
+	return nil
 }
 
 func (m *MapStorage) GetReplica(ctx context.Context, id string) (*types.Replica, error) {
@@ -203,4 +242,3 @@ func (m *MapStorage) SetToken(ctx context.Context, token string) error {
 	m.token = token
 	return nil
 }
-

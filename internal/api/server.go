@@ -1,13 +1,17 @@
 package api
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/netip"
 	"time"
 
+	"github.com/fardeensayyed16/orca/internal/scheduler"
 	"github.com/fardeensayyed16/orca/internal/storage"
 	"github.com/fardeensayyed16/orca/pkg/types"
 )
@@ -40,6 +44,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/nodes", s.auth(s.handleListNodes))
 	s.mux.HandleFunc("GET /api/v1/nodes/{name}", s.auth(s.handleGetNode))
 	s.mux.HandleFunc("DELETE /api/v1/nodes/{name}", s.auth(s.handleDeleteNode))
+
+	// Token-protected service and pod routes
+	s.mux.HandleFunc("POST /api/v1/services", s.auth(s.handleCreateService))
+	s.mux.HandleFunc("GET /api/v1/services", s.auth(s.handleListServices))
+	s.mux.HandleFunc("GET /api/v1/pods", s.auth(s.handleListPods))
 
 	// token/show — loopback / auth
 	s.mux.HandleFunc("POST /api/v1/token/show", s.auth(s.handleTokenShow))
@@ -82,6 +91,180 @@ type HeartbeatRequest struct {
 	DockerOK            bool     `json:"docker_ok"`
 	CapacityCPUMillis   int64    `json:"capacity_cpu_millis,omitempty"`
 	CapacityMemoryBytes int64    `json:"capacity_memory_bytes,omitempty"`
+}
+
+type CreateServiceRequest struct {
+	Name          string `json:"name"`
+	Image         string `json:"image"`
+	Replicas      int    `json:"replicas"`
+	CPUMillis     int64  `json:"cpu_millis"`
+	MemoryBytes   int64  `json:"memory_bytes"`
+	ContainerPort int    `json:"container_port"`
+}
+
+type ReplicaSummary struct {
+	Desired  int `json:"desired"`
+	Total    int `json:"total"`
+	Pending  int `json:"pending"`
+	Starting int `json:"starting"`
+	Running  int `json:"running"`
+	Failed   int `json:"failed"`
+}
+
+type ServiceWithReplicaSummary struct {
+	*types.Service
+	ReplicaSummary ReplicaSummary `json:"replica_summary"`
+}
+
+type CreateServiceResponse struct {
+	Service  *types.Service   `json:"service"`
+	Replicas []*types.Replica `json:"replicas"`
+}
+
+func (s *Server) handleCreateService(w http.ResponseWriter, r *http.Request) {
+	var req CreateServiceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.Image == "" {
+		jsonError(w, "name and image are required", http.StatusBadRequest)
+		return
+	}
+	if req.Replicas == 0 {
+		req.Replicas = 1
+	}
+	if req.Replicas < 0 || req.CPUMillis < 0 || req.MemoryBytes < 0 ||
+		req.ContainerPort < 0 || req.ContainerPort > 65535 {
+		jsonError(w, "replicas, resources, or container_port are invalid", http.StatusBadRequest)
+		return
+	}
+
+	existing, err := s.store.GetService(r.Context(), req.Name)
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if existing != nil {
+		jsonError(w, "service already exists", http.StatusConflict)
+		return
+	}
+
+	if req.CPUMillis == 0 {
+		req.CPUMillis = 1000
+	}
+	if req.MemoryBytes == 0 {
+		req.MemoryBytes = 536870912
+	}
+	service := &types.Service{
+		Name:          req.Name,
+		Image:         req.Image,
+		Replicas:      req.Replicas,
+		CPUMillis:     req.CPUMillis,
+		MemoryBytes:   req.MemoryBytes,
+		ContainerPort: req.ContainerPort,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}
+	if err := s.store.DeployService(r.Context(), service); err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	replicas := make([]*types.Replica, 0, req.Replicas)
+	for i := 0; i < req.Replicas; i++ {
+		id, err := newReplicaID()
+		if err != nil {
+			jsonError(w, "failed to create replica ID: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		replica := &types.Replica{
+			ID:          id,
+			ServiceName: service.Name,
+			Status:      types.PodStatusPending,
+			Health:      types.HealthStatusUnknown,
+			CreatedAt:   time.Now().UTC(),
+		}
+		if err := s.store.UpsertReplica(r.Context(), replica); err != nil {
+			jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := s.store.WithTx(r.Context(), func(tx storage.Tx) error {
+			return scheduler.ScheduleReplica(r.Context(), tx, service, replica)
+		}); err != nil && !errors.Is(err, scheduler.ErrNoSuitableNode) {
+			jsonError(w, "scheduling error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		replicas = append(replicas, replica)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(CreateServiceResponse{Service: service, Replicas: replicas})
+}
+
+func newReplicaID() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(id[:]), nil
+}
+
+func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
+	services, err := s.store.ListServices(r.Context())
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	replicas, err := s.store.ListReplicas(r.Context())
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	summaries := make(map[string]*ReplicaSummary, len(services))
+	for _, service := range services {
+		summaries[service.Name] = &ReplicaSummary{Desired: service.Replicas}
+	}
+	for _, replica := range replicas {
+		summary := summaries[replica.ServiceName]
+		if summary == nil {
+			continue
+		}
+		summary.Total++
+		switch replica.Status {
+		case types.PodStatusPending:
+			summary.Pending++
+		case types.PodStatusStarting:
+			summary.Starting++
+		case types.PodStatusRunning:
+			summary.Running++
+		case types.PodStatusFailed:
+			summary.Failed++
+		}
+	}
+	result := make([]ServiceWithReplicaSummary, 0, len(services))
+	for _, service := range services {
+		result = append(result, ServiceWithReplicaSummary{
+			Service:        service,
+			ReplicaSummary: *summaries[service.Name],
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) handleListPods(w http.ResponseWriter, r *http.Request) {
+	replicas, err := s.store.ListReplicas(r.Context())
+	if err != nil {
+		jsonError(w, "storage error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if replicas == nil {
+		replicas = []*types.Replica{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(replicas)
 }
 
 func (s *Server) handleRegisterNode(w http.ResponseWriter, r *http.Request) {

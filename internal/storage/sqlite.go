@@ -155,6 +155,36 @@ func (s *SQLiteStorage) WithTx(ctx context.Context, fn func(tx Tx) error) error 
 	return stx.Commit()
 }
 
+func (t *sqliteTx) ListNodes(ctx context.Context) ([]*types.Node, error) {
+	return listNodes(ctx, t.tx)
+}
+
+func (t *sqliteTx) ListServices(ctx context.Context) ([]*types.Service, error) {
+	return listServices(ctx, t.tx)
+}
+
+func (t *sqliteTx) ListReplicas(ctx context.Context) ([]*types.Replica, error) {
+	return listReplicas(ctx, t.tx)
+}
+
+func (t *sqliteTx) UpdateReplicaNode(ctx context.Context, id, nodeName string) error {
+	result, err := t.tx.ExecContext(ctx,
+		"UPDATE replicas SET node_name = ?, status = ? WHERE id = ? AND status = ?",
+		nodeName, string(types.PodStatusStarting), id, string(types.PodStatusPending),
+	)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return fmt.Errorf("replica %q not found or not pending", id)
+	}
+	return nil
+}
+
 // Services
 
 func (s *SQLiteStorage) DeployService(ctx context.Context, svc *types.Service) error {
@@ -202,10 +232,14 @@ func (s *SQLiteStorage) DeployService(ctx context.Context, svc *types.Service) e
 }
 
 func (s *SQLiteStorage) ListServices(ctx context.Context) ([]*types.Service, error) {
+	return listServices(ctx, s.db)
+}
+
+func listServices(ctx context.Context, q queryContext) ([]*types.Service, error) {
 	query := `SELECT name, image, replicas, container_port, service_port, env_json, command_json,
 		cpu_millis, memory_bytes, restart_policy, pull_policy, liveness_probe_json,
 		readiness_probe_json, autoscale_json, created_at, updated_at FROM services`
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +253,7 @@ func (s *SQLiteStorage) ListServices(ctx context.Context) ([]*types.Service, err
 		}
 		list = append(list, svc)
 	}
-	return list, nil
+	return list, rows.Err()
 }
 
 func (s *SQLiteStorage) GetService(ctx context.Context, name string) (*types.Service, error) {
@@ -330,14 +364,37 @@ func (s *SQLiteStorage) UpsertReplica(ctx context.Context, r *types.Replica) err
 }
 
 func (s *SQLiteStorage) ListReplicas(ctx context.Context) ([]*types.Replica, error) {
+	return listReplicas(ctx, s.db)
+}
+
+func (s *SQLiteStorage) ListReplicasByService(ctx context.Context, serviceName string) ([]*types.Replica, error) {
 	query := `SELECT id, service_name, node_name, container_id, host_port, status, health, ready,
-		restart_count, reschedule_count, last_rescheduled_at, exit_code, message, created_at, started_at FROM replicas`
-	rows, err := s.db.QueryContext(ctx, query)
+		restart_count, reschedule_count, last_rescheduled_at, exit_code, message, created_at, started_at
+		FROM replicas WHERE service_name = ?`
+	rows, err := s.db.QueryContext(ctx, query, serviceName)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return collectReplicas(rows)
+}
 
+type queryContext interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func listReplicas(ctx context.Context, q queryContext) ([]*types.Replica, error) {
+	query := `SELECT id, service_name, node_name, container_id, host_port, status, health, ready,
+		restart_count, reschedule_count, last_rescheduled_at, exit_code, message, created_at, started_at FROM replicas`
+	rows, err := q.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return collectReplicas(rows)
+}
+
+func collectReplicas(rows *sql.Rows) ([]*types.Replica, error) {
 	var list []*types.Replica
 	for rows.Next() {
 		r, err := scanReplica(rows)
@@ -346,7 +403,7 @@ func (s *SQLiteStorage) ListReplicas(ctx context.Context) ([]*types.Replica, err
 		}
 		list = append(list, r)
 	}
-	return list, nil
+	return list, rows.Err()
 }
 
 func (s *SQLiteStorage) GetReplica(ctx context.Context, id string) (*types.Replica, error) {
@@ -437,8 +494,12 @@ func (s *SQLiteStorage) UpsertNode(ctx context.Context, node *types.Node) error 
 }
 
 func (s *SQLiteStorage) ListNodes(ctx context.Context) ([]*types.Node, error) {
+	return listNodes(ctx, s.db)
+}
+
+func listNodes(ctx context.Context, q queryContext) ([]*types.Node, error) {
 	query := `SELECT name, address, capacity_cpu_millis, capacity_memory_bytes, status, last_seen, not_ready_since, docker_ok FROM nodes`
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +513,25 @@ func (s *SQLiteStorage) ListNodes(ctx context.Context) ([]*types.Node, error) {
 		}
 		list = append(list, n)
 	}
-	return list, nil
+	return list, rows.Err()
+}
+
+func (s *SQLiteStorage) UpdateReplicaNode(ctx context.Context, id, nodeName string) error {
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE replicas SET node_name = ?, status = ? WHERE id = ? AND status = ?",
+		nodeName, string(types.PodStatusStarting), id, string(types.PodStatusPending),
+	)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return fmt.Errorf("replica %q not found or not pending", id)
+	}
+	return nil
 }
 
 func (s *SQLiteStorage) GetNode(ctx context.Context, name string) (*types.Node, error) {
@@ -556,4 +635,3 @@ func (s *SQLiteStorage) SetToken(ctx context.Context, token string) error {
 	_, err := s.db.ExecContext(ctx, query, token)
 	return err
 }
-

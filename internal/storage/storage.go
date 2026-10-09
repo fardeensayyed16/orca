@@ -10,6 +10,10 @@ import (
 type Tx interface {
 	Commit() error
 	Rollback() error
+	ListServices(ctx context.Context) ([]*types.Service, error)
+	ListNodes(ctx context.Context) ([]*types.Node, error)
+	ListReplicas(ctx context.Context) ([]*types.Replica, error)
+	UpdateReplicaNode(ctx context.Context, id, nodeName string) error
 }
 
 type Storage interface {
@@ -21,8 +25,10 @@ type Storage interface {
 
 	// Replica methods
 	ListReplicas(ctx context.Context) ([]*types.Replica, error)
+	ListReplicasByService(ctx context.Context, serviceName string) ([]*types.Replica, error)
 	GetReplica(ctx context.Context, id string) (*types.Replica, error)
 	UpsertReplica(ctx context.Context, replica *types.Replica) error
+	UpdateReplicaNode(ctx context.Context, id, nodeName string) error
 	DeleteReplica(ctx context.Context, id string) error
 
 	// Node methods
@@ -45,4 +51,3 @@ type Storage interface {
 	WithTx(ctx context.Context, fn func(tx Tx) error) error
 	Close() error
 }
-
