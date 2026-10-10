@@ -19,7 +19,8 @@ input{padding:.4rem;margin:.2rem}
 {{else if eq .Page "nodes"}}<h1>Nodes</h1>{{template "nodes_table" .}}
 {{else if eq .Page "services"}}<h1>Services</h1><form method="post" action="/api/v1/gui/deploy">
 <input name="name" placeholder="Name" required><input name="image" placeholder="Image" required>
-<input name="replicas" type="number" min="1" value="1" required><button>Deploy</button></form>
+<input name="replicas" type="number" min="1" value="1" required>
+<label>Port: <input type="number" name="container_port" min="1" max="65535" value="80" required></label><button>Deploy</button></form>
 {{template "services_table" .}}
 {{else if eq .Page "pods"}}<h1>Pods</h1>{{template "pods_table" .}}{{end}}{{end}}
 {{define "summary"}}<div id="summary" hx-get="/api/v1/gui/summary" hx-trigger="every 30s" hx-swap="outerHTML">

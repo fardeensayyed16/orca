@@ -1,15 +1,25 @@
 package gui
 
 import (
+	"embed"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/fardeensayyed16/orca/internal/serviceports"
 	"github.com/fardeensayyed16/orca/internal/storage"
+	"github.com/fardeensayyed16/orca/pkg/config"
 	"github.com/fardeensayyed16/orca/pkg/types"
 )
+
+//go:embed templates/services.html
+var servicesTemplateFS embed.FS
+
+var servicesTemplate = template.Must(template.ParseFS(servicesTemplateFS, "templates/services.html"))
 
 type pageData struct {
 	Nodes          []*types.Node
@@ -25,6 +35,10 @@ type pageData struct {
 }
 
 func RegisterRoutes(mux *http.ServeMux, store storage.Storage, _ string) {
+	ports, portAllocatorErr := serviceports.NewAllocator(
+		store, config.GlobalConfig.Daemon.ServicePortRange, "0.0.0.0:9001",
+	)
+	var portMu sync.Mutex
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		renderPage(w, r, store, "index")
 	})
@@ -83,11 +97,34 @@ func RegisterRoutes(mux *http.ServeMux, store storage.Storage, _ string) {
 			http.Error(w, "name, image, and a positive replica count are required", http.StatusBadRequest)
 			return
 		}
-		err = store.DeployService(r.Context(), &types.Service{
-			Name: strings.TrimSpace(r.FormValue("name")), Image: strings.TrimSpace(r.FormValue("image")),
-			Replicas: replicas,
-		})
+		portStr := r.FormValue("container_port")
+		port, err := strconv.Atoi(portStr)
+		if err != nil || port <= 0 || port > 65535 {
+			http.Error(w, "invalid container_port: must be 1-65535", http.StatusBadRequest)
+			return
+		}
+		if portAllocatorErr != nil {
+			http.Error(w, "service port allocator unavailable: "+portAllocatorErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		portMu.Lock()
+		err = ports.Restore(r.Context())
+		servicePort := 0
+		if err == nil {
+			servicePort, err = ports.Allocate(r.Context(), strings.TrimSpace(r.FormValue("name")))
+		}
+		portMu.Unlock()
 		if err != nil {
+			http.Error(w, "allocate service port: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		svc := &types.Service{
+			Name: strings.TrimSpace(r.FormValue("name")), Image: strings.TrimSpace(r.FormValue("image")),
+			Replicas: replicas, ContainerPort: port, ServicePort: servicePort,
+		}
+		err = store.DeployService(r.Context(), svc)
+		if err != nil {
+			ports.Release(svc.Name, servicePort)
 			http.Error(w, "deploy service: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -151,6 +188,13 @@ func renderPage(w http.ResponseWriter, r *http.Request, store storage.Storage, n
 	data, ok := loadPageData(w, r, store)
 	if ok {
 		data.Page = name
+		if name == "services" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err := servicesTemplate.ExecuteTemplate(w, "services", data); err != nil {
+				http.Error(w, "render services: "+err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
 		render(w, name, data)
 	}
 }
