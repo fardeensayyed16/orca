@@ -53,3 +53,18 @@ cd ../orclet && go build -o orclet ./cmd/orclet
 
 
 
+## ⚠️ Scope and Limitations
+
+This is an *educational project* targeting a trusted LAN environment.
+
+- *No TLS* — Bearer token travels in plaintext. Treat LAN as trusted.
+- *Single control plane* — No leader election or failover for the daemon.
+- *Linux containers only* — Docker must be in Linux containers mode.
+- *Host port pool* — Limited to ~1000 published ports per node (40000-41000).
+- *No RBAC* — Single shared token for CLI and orclets.
+
+---
+
+## 📄 License
+
+[MIT License](LICENSE)
