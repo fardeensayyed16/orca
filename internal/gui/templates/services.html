@@ -4,26 +4,60 @@
 <title>Orca Services</title>
 <script src="https://unpkg.com/htmx.org@1.9.10"></script>
 <style>
-body{font:15px system-ui,sans-serif;background:#f4f4f4;color:#222;margin:0}
-nav{background:#222;padding:1rem}nav a{color:#fff;margin-right:1rem}
-main{max-width:1100px;margin:2rem auto;padding:0 1rem}
-table{border-collapse:collapse;width:100%;background:#fff}th,td{text-align:left;padding:.65rem;border-bottom:1px solid #ddd}
-button{background:#397a55;color:#fff;border:0;padding:.45rem .7rem;cursor:pointer}
-input{padding:.4rem;margin:.2rem}
+*{box-sizing:border-box}
+body{font:15px system-ui,-apple-system,sans-serif;background:#f9fafb;color:#1f2937;margin:0;padding:0 20px;animation:fadeIn 200ms ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.navbar{background:#1f2937;color:#fff;margin:0 -20px;padding:0 max(20px,calc((100% - 1200px)/2));display:flex;align-items:center;justify-content:space-between;min-height:64px}
+.brand{position:relative;overflow:hidden;color:#fff;font-size:18px;font-weight:700;text-decoration:none;white-space:nowrap}
+.brand::after{content:'';position:absolute;top:0;left:-100%;width:50%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.15),transparent);animation:brandSweep 5s infinite}
+@keyframes brandSweep{0%,80%{left:-100%}100%{left:200%}}
+.logo{display:inline-block;animation:logoPulse 3s ease-in-out infinite}
+@keyframes logoPulse{0%,100%{transform:scale(1);filter:drop-shadow(0 0 0 transparent)}50%{transform:scale(1.1);filter:drop-shadow(0 0 8px rgba(96,165,250,.6))}}
+.nav-links{display:flex;align-items:stretch;gap:4px;height:64px}
+.nav-links a{display:flex;align-items:center;color:#d1d5db;text-decoration:none;padding:0 14px;border-bottom:3px solid transparent}
+.nav-links a:hover{background:#374151;color:#fff}
+.nav-links a.active{color:#fff;font-weight:700;border-bottom-color:#fff}
+main{max-width:1200px;margin:32px auto;padding:0}
+h1{font-size:28px;margin:0 0 22px}
+.table-wrap{overflow-x:auto;background:#fff;border-radius:8px;box-shadow:0 1px 3px #00000012}
+table{border-collapse:collapse;width:100%;background:#fff}
+th,td{text-align:left;padding:12px;border-bottom:1px solid #e5e7eb}
+th{background:#374151;color:#fff;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+tbody tr:nth-child(odd){background:#f9fafb}
+tbody tr{transition:background-color 100ms ease}
+tbody tr:hover{background-color:#eff6ff}
+button{border:0;border-radius:6px;padding:8px 16px;color:#fff;cursor:pointer;font:700 14px system-ui,-apple-system,sans-serif;transition:all 150ms ease}
+button:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,.15)}
+button[type=submit]{background:#16a34a}
+button[type=submit]:hover{background:#15803d}
+.danger{background:#dc2626!important}
+.danger:hover{background:#b91c1c!important}
+form{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+input{padding:8px;border:1px solid #d1d5db;border-radius:6px;font:14px system-ui,-apple-system,sans-serif;max-width:100%}
+input:focus{outline:2px solid #3b82f6;border-color:#3b82f6}
+label{font-size:12px;color:#6b7280;text-transform:uppercase}
+.deploy-form{background:#fff;padding:16px;border-radius:8px;box-shadow:0 1px 3px #00000012;margin-bottom:20px}
+.empty-state{text-align:center;padding:36px 16px;color:#6b7280}
+.htmx-request{opacity:.5}
+@media(max-width:768px){.table-wrap{overflow-x:auto}}
+@media(max-width:600px){body{padding:0 12px}.navbar{margin:0 -12px;padding:8px 12px;align-items:flex-start;flex-direction:column}.nav-links{height:auto;flex-wrap:wrap}.nav-links a{min-height:42px;padding:0 10px}main{margin:24px auto}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body>
-<nav><a href="/">Home</a><a href="/nodes">Nodes</a><a href="/services">Services</a><a href="/pods">Pods</a></nav>
+<nav class="navbar"><a class="brand" href="/"><span class="logo">🛰️</span> Orca Dashboard</a><div class="nav-links">
+<a href="/">Home</a><a href="/nodes">Nodes</a><a href="/services" class="active">Services</a><a href="/pods">Pods</a>
+</div></nav>
 <main><h1>Services</h1>
-<form method="post" action="/api/v1/gui/deploy">
+<form class="deploy-form" method="post" action="/api/v1/gui/deploy">
 <input name="name" placeholder="Name" required>
 <input name="image" placeholder="Image" required>
 <input name="replicas" type="number" min="1" value="1" required>
 <label>Port: <input type="number" name="container_port" min="1" max="65535" value="80" required></label>
 <button type="submit">Deploy</button>
 </form>
-<div hx-get="/api/v1/gui/services" hx-trigger="every 30s" hx-swap="outerHTML">
-<table><tr><th>Name</th><th>Image</th><th>Replicas</th><th>Port</th><th>Actions</th></tr>
-{{range .Services}}<tr><td>{{.Name}}</td><td>{{.Image}}</td><td>{{.Replicas}}</td><td>{{.ServicePort}}</td><td>
+<div class="table-wrap" hx-get="/api/v1/gui/services" hx-trigger="every 30s" hx-swap="outerHTML" hx-indicator="body">
+<table><thead><tr><th>Name</th><th>Image</th><th>Replicas</th><th>Port</th><th>Actions</th></tr></thead><tbody>
+{{if .Services}}{{range .Services}}<tr><td>{{.Name}}</td><td>{{.Image}}</td><td>{{.Replicas}}</td><td>{{.ServicePort}}</td><td>
 <form method="post" action="/api/v1/gui/scale"><input type="hidden" name="name" value="{{.Name}}"><input name="replicas" type="number" min="1" value="{{.Replicas}}" required><button type="submit">Scale</button></form>
-<form method="post" action="/api/v1/gui/delete-service"><input type="hidden" name="name" value="{{.Name}}"><button type="submit">Delete</button></form>
-</td></tr>{{end}}</table></div></main></body></html>
+<form method="post" action="/api/v1/gui/delete-service"><input type="hidden" name="name" value="{{.Name}}"><button class="danger" type="submit">Delete</button></form>
+</td></tr>{{end}}{{else}}<tr><td colspan="5" class="empty-state">📦 No services yet — deploy your first one!</td></tr>{{end}}</tbody></table></div></main></body></html>
 {{end}}

@@ -3,44 +3,126 @@
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Orca</title><script src="https://unpkg.com/htmx.org@1.9.10"></script>
 <style>
-body{font:15px system-ui,sans-serif;background:#f4f4f4;color:#222;margin:0}
-nav{background:#222;padding:1rem}nav a{color:#fff;margin-right:1rem}
-main{max-width:1100px;margin:2rem auto;padding:0 1rem}
-table{border-collapse:collapse;width:100%;background:#fff}th,td{text-align:left;padding:.65rem;border-bottom:1px solid #ddd}
-button{background:#397a55;color:#fff;border:0;padding:.45rem .7rem;cursor:pointer}
-.NotReady,.Failed,.Unhealthy{color:#b33}.Ready,.Running,.Healthy{color:#397a55}
-input{padding:.4rem;margin:.2rem}
+*{box-sizing:border-box}
+body{font:15px system-ui,-apple-system,sans-serif;background:linear-gradient(-45deg,#f9fafb,#eef2ff,#f0fdf4,#f9fafb);background-size:400% 400%;color:#1f2937;margin:0;padding:0 20px;animation:gradientShift 20s ease infinite}
+@keyframes gradientShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+@keyframes fadeInUp{from{opacity:0;transform:translateY(15px)}to{opacity:1;transform:translateY(0)}}
+.navbar{background:#1f2937;color:#fff;margin:0 -20px;padding:0 max(20px,calc((100% - 1200px)/2));display:flex;align-items:center;justify-content:space-between;min-height:64px}
+.brand{position:relative;overflow:hidden;color:#fff;font-size:18px;font-weight:700;text-decoration:none;white-space:nowrap}
+.brand::after{content:'';position:absolute;top:0;left:-100%;width:50%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.15),transparent);animation:brandSweep 5s infinite}
+@keyframes brandSweep{0%,80%{left:-100%}100%{left:200%}}
+.logo{display:inline-block;animation:logoPulse 3s ease-in-out infinite}
+@keyframes logoPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.1);filter:drop-shadow(0 0 8px rgba(96,165,250,.6))}}
+.nav-links{display:flex;align-items:stretch;gap:4px;height:64px}
+.nav-links a{position:relative;display:flex;align-items:center;color:#d1d5db;text-decoration:none;padding:0 14px;border-bottom:3px solid transparent}
+.nav-links a::after{content:'';position:absolute;bottom:-2px;left:50%;width:0;height:2px;background:#60a5fa;transition:all 300ms cubic-bezier(.4,0,.2,1);transform:translateX(-50%)}
+.nav-links a:hover::after{width:100%}
+.nav-links a:hover{background:#374151;color:#fff}
+.nav-links a.active{color:#fff;font-weight:700;border-bottom-color:#fff}
+main{max-width:1200px;margin:32px auto;padding:0;animation:fadeInUp 400ms ease}
+h1{font-size:28px;margin:0 0 22px}
+.summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.card{background:#fff;border:1px solid transparent;border-radius:12px;padding:20px;box-shadow:0 1px 3px #00000012;transition:all 250ms cubic-bezier(.4,0,.2,1);animation:fadeInUp 500ms ease backwards}
+.card:hover{transform:translateY(-4px);box-shadow:0 12px 24px rgba(59,130,246,.15);border-color:#3b82f6}
+.card:nth-child(1){animation-delay:0ms}
+.card:nth-child(2){animation-delay:80ms}
+.card:nth-child(3){animation-delay:160ms}
+.card:nth-child(4){animation-delay:240ms}
+.card-green{border-left:4px solid #16a34a}.card-yellow{border-left:4px solid #ca8a04}
+.card-red{border-left:4px solid #dc2626}.card-gray{border-left:4px solid #6b7280}
+.card-icon{font-size:22px;margin-bottom:10px}
+.summary-card .icon{display:inline-block;animation:iconBounceIn 600ms ease backwards}
+.summary-card:hover .icon{transform:rotate(10deg) scale(1.15);transition:transform 300ms cubic-bezier(.4,0,.2,1)}
+@keyframes iconBounceIn{0%{transform:scale(0) rotate(-180deg);opacity:0}60%{transform:scale(1.2) rotate(20deg);opacity:1}100%{transform:scale(1) rotate(0);opacity:1}}
+.summary-number{font-size:32px;font-weight:700;line-height:1.2}
+.summary-label{font-size:14px;color:#6b7280;margin-top:6px}
+.table-wrap{overflow-x:auto;background:#fff;border-radius:8px;box-shadow:0 1px 3px #00000012}
+table{border-collapse:collapse;width:100%;background:#fff}
+th,td{text-align:left;padding:12px;border-bottom:1px solid #e5e7eb}
+th{background:#374151;color:#fff;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+tbody tr:nth-child(odd){background:#f9fafb}
+tbody tr{transition:all 150ms cubic-bezier(.4,0,.2,1)}
+tbody tr:hover{background:#eff6ff;transform:translateX(4px);box-shadow:-4px 0 0 0 #3b82f6}
+.status-badge,.badge{display:inline-block;border-radius:999px;padding:2px 10px;color:#fff;font-size:12px;font-weight:700;text-transform:uppercase;white-space:nowrap}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.status-dot.running{background:#16a34a;animation:livePulse 1.5s infinite}
+.status-dot.starting{background:#ca8a04;animation:livePulse 1.5s infinite}
+.status-dot.failed{background:#dc2626}
+.status-dot.unknown{background:#6b7280}
+@keyframes livePulse{0%{box-shadow:0 0 0 0 rgba(22,163,74,.7)}70%{box-shadow:0 0 0 8px rgba(22,163,74,0)}100%{box-shadow:0 0 0 0 rgba(22,163,74,0)}}
+@keyframes livePulseStarting{0%{box-shadow:0 0 0 0 rgba(202,138,4,.7)}70%{box-shadow:0 0 0 8px rgba(202,138,4,0)}100%{box-shadow:0 0 0 0 rgba(202,138,4,0)}}
+.Ready,.Healthy,.Running{background:#16a34a;color:#fff}
+.Starting,.Pending{background:#ca8a04;color:#fff}
+.Failed,.Unhealthy{background:#dc2626;color:#fff}
+.Unknown,.Completed,.NotReady,.Deleting{background:#6b7280;color:#fff}
+.badge.pending,.badge.Pending,.badge.Starting{animation:pulse 2s infinite}
+.badge[class~="Running"]::before,.badge[class~="Ready"]::before{content:'';display:inline-block;width:6px;height:6px;background:#4ade80;border-radius:50%;margin-right:6px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(74,222,128,.7)}50%{box-shadow:0 0 0 6px rgba(74,222,128,0)}}
+button,.button{position:relative;overflow:hidden;border:0;border-radius:6px;padding:8px 16px;color:#fff;cursor:pointer;font:700 14px system-ui,-apple-system,sans-serif;transition:all 200ms cubic-bezier(.4,0,.2,1)}
+button::after{content:'';position:absolute;top:0;left:-100%;width:100%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.3),transparent);transition:left 500ms cubic-bezier(.4,0,.2,1)}
+button:hover::after{left:100%}
+button:hover,.button:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.2)}
+button[type=submit],.primary{background:#16a34a}
+button[type=submit]:hover,.primary:hover{background:#15803d}
+button.danger,.danger{background:#dc2626}
+button.danger:hover,.danger:hover{background:#b91c1c}
+form{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+input{padding:8px;border:1px solid #d1d5db;border-radius:6px;font:14px system-ui,-apple-system,sans-serif;max-width:100%}
+input:focus{outline:2px solid #3b82f6;border-color:#3b82f6}
+label{font-size:12px;color:#6b7280;text-transform:uppercase}
+.deploy-form{background:#fff;padding:16px;border-radius:8px;box-shadow:0 1px 3px #00000012;margin-bottom:20px}
+.empty-state{text-align:center;padding:36px 16px;color:#6b7280}
+.htmx-request{opacity:.5}
+.progress-bar{position:relative;overflow:hidden}
+.progress-bar::after{content:'';position:absolute;top:0;left:-100%;width:100%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.4),transparent);animation:shimmer 2s infinite}
+@keyframes shimmer{to{left:100%}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media(max-width:768px){.summary-grid{grid-template-columns:1fr}.table-wrap{overflow-x:auto}}
+@media(max-width:600px){body{padding:0 12px}.navbar{margin:0 -12px;padding:8px 12px;align-items:flex-start;flex-direction:column}.nav-links{height:auto;flex-wrap:wrap}.nav-links a{min-height:42px;padding:0 10px}main{margin:24px auto}}
 </style></head><body>
-<nav><a href="/">Home</a><a href="/nodes">Nodes</a><a href="/services">Services</a><a href="/pods">Pods</a></nav>
+<nav class="navbar"><a class="brand" href="/"><span class="logo">🛰️</span> Orca Dashboard</a><div class="nav-links">
+<a href="/" {{if eq .Page "index"}}class="active"{{end}}>Home</a>
+<a href="/nodes" {{if eq .Page "nodes"}}class="active"{{end}}>Nodes</a>
+<a href="/services" {{if eq .Page "services"}}class="active"{{end}}>Services</a>
+<a href="/pods" {{if eq .Page "pods"}}class="active"{{end}}>Pods</a>
+</div></nav>
 <main>{{template "body" .}}</main></body></html>
 {{end}}
 {{define "index"}}{{template "layout" .}}{{end}}
 {{define "body"}}{{if eq .Page "index"}}<h1>Orca Dashboard</h1>{{template "summary" .}}
 {{else if eq .Page "nodes"}}<h1>Nodes</h1>{{template "nodes_table" .}}
-{{else if eq .Page "services"}}<h1>Services</h1><form method="post" action="/api/v1/gui/deploy">
+{{else if eq .Page "services"}}<h1>Services</h1><form class="deploy-form" method="post" action="/api/v1/gui/deploy">
 <input name="name" placeholder="Name" required><input name="image" placeholder="Image" required>
 <input name="replicas" type="number" min="1" value="1" required>
 <label>Port: <input type="number" name="container_port" min="1" max="65535" value="80" required></label><button>Deploy</button></form>
 {{template "services_table" .}}
 {{else if eq .Page "pods"}}<h1>Pods</h1>{{template "pods_table" .}}{{end}}{{end}}
-{{define "summary"}}<div id="summary" hx-get="/api/v1/gui/summary" hx-trigger="every 30s" hx-swap="outerHTML">
-Daemon: {{.DaemonStatus}} | Services: {{.ServiceCount}} | Running: {{.RunningCount}} | Healthy: {{.HealthyCount}} | Ready: {{.ReadyCount}} | Ready nodes: {{.NodeReadyCount}}
+{{define "summary"}}<div id="summary" hx-get="/api/v1/gui/summary" hx-trigger="every 30s" hx-swap="outerHTML" hx-indicator="body">
+<p>Daemon: <span class="status-badge Ready"><span class="status-dot running"></span>{{.DaemonStatus}}</span></p>
+<div class="summary-grid">
+<div class="card summary-card card-green"><div class="card-icon icon">📦</div><div class="summary-number">{{.ServiceCount}}</div><div class="summary-label">Services</div></div>
+<div class="card summary-card card-yellow"><div class="card-icon icon">🖥️</div><div class="summary-number">{{.RunningCount}}</div><div class="summary-label">Running</div></div>
+<div class="card summary-card card-green"><div class="card-icon icon">🟢</div><div class="summary-number">{{.HealthyCount}}</div><div class="summary-label">Healthy</div></div>
+<div class="card summary-card card-gray"><div class="card-icon icon">✅</div><div class="summary-number">{{.ReadyCount}}</div><div class="summary-label">Ready</div></div>
+</div>
 </div>{{end}}
 {{define "nodes"}}{{template "layout" .}}{{end}}
 {{define "services"}}{{template "layout" .}}{{end}}
 {{define "pods"}}{{template "layout" .}}{{end}}
-{{define "nodes_table"}}<div hx-get="/api/v1/gui/nodes" hx-trigger="every 30s" hx-swap="outerHTML"><table>
-<tr><th>Name</th><th>Status</th><th>CPU</th><th>Mem</th><th>Last Seen</th><th>Address</th><th></th></tr>
-{{range .Nodes}}<tr><td>{{.Name}}</td><td class="{{.Status}}">{{.Status}}</td><td>{{.CapacityCPUMillis}}m</td><td>{{.CapacityMemoryBytes}}</td><td>{{.LastSeen}}</td><td>{{.Address}}</td>
-<td><form method="post" action="/api/v1/gui/delete-node"><input type="hidden" name="name" value="{{.Name}}"><button>Delete</button></form></td></tr>{{end}}
-</table></div>{{end}}
-{{define "services_table"}}<div hx-get="/api/v1/gui/services" hx-trigger="every 30s" hx-swap="outerHTML"><table>
+{{define "nodes_table"}}<div class="table-wrap" hx-get="/api/v1/gui/nodes" hx-trigger="every 30s" hx-swap="outerHTML" hx-indicator="body"><table>
+<thead><tr><th>Name</th><th>Status</th><th>CPU</th><th>Mem</th><th>Last Seen</th><th>Address</th><th></th></tr></thead><tbody>
+{{range .Nodes}}<tr><td>{{.Name}}</td><td><span class="status-badge badge {{.Status}}">{{.Status}}</span></td><td>{{.CapacityCPUMillis}}m</td><td>{{.CapacityMemoryBytes}}</td><td>{{.LastSeen}}</td><td>{{.Address}}</td>
+<td><form method="post" action="/api/v1/gui/delete-node"><input type="hidden" name="name" value="{{.Name}}"><button class="danger" type="submit">Delete</button></form></td></tr>{{end}}
+</tbody></table></div>{{end}}
+{{define "services_table"}}<div class="table-wrap" hx-get="/api/v1/gui/services" hx-trigger="every 30s" hx-swap="outerHTML" hx-indicator="body"><table>
+<thead>
 <tr><th>Name</th><th>Image</th><th>Replicas</th><th>Port</th><th>Actions</th></tr>
-{{range .Services}}<tr><td>{{.Name}}</td><td>{{.Image}}</td><td>{{.Replicas}}</td><td>{{.ServicePort}}</td><td>
-<form method="post" action="/api/v1/gui/scale"><input type="hidden" name="name" value="{{.Name}}"><input name="replicas" type="number" min="1" value="{{.Replicas}}" required><button>Scale</button></form>
-<form method="post" action="/api/v1/gui/delete-service"><input type="hidden" name="name" value="{{.Name}}"><button>Delete</button></form>
-</td></tr>{{end}}</table></div>{{end}}
-{{define "pods_table"}}<div hx-get="/api/v1/gui/pods" hx-trigger="every 30s" hx-swap="outerHTML"><table>
-<tr><th>ID</th><th>Service</th><th>Status</th><th>Health</th><th>Ready</th><th>Node</th><th>Restarts</th></tr>
-{{range .Replicas}}<tr><td>{{.ID}}</td><td>{{.ServiceName}}</td><td class="{{.Status}}">{{.Status}}</td><td class="{{.Health}}">{{.Health}}</td><td>{{.Ready}}</td><td>{{.NodeName}}</td><td>{{.RestartCount}}</td></tr>{{end}}
-</table></div>{{end}}
+ </thead><tbody>
+{{if .Services}}{{range .Services}}<tr><td>{{.Name}}</td><td>{{.Image}}</td><td>{{.Replicas}}</td><td>{{.ServicePort}}</td><td>
+<form method="post" action="/api/v1/gui/scale"><input type="hidden" name="name" value="{{.Name}}"><input name="replicas" type="number" min="1" value="{{.Replicas}}" required><button type="submit">Scale</button></form>
+<form method="post" action="/api/v1/gui/delete-service"><input type="hidden" name="name" value="{{.Name}}"><button class="danger" type="submit">Delete</button></form>
+</td></tr>{{end}}{{else}}<tr><td colspan="5" class="empty-state">📦 No services yet — deploy your first one!</td></tr>{{end}}</tbody></table></div>{{end}}
+{{define "pods_table"}}<div class="table-wrap" hx-get="/api/v1/gui/pods" hx-trigger="every 30s" hx-swap="outerHTML" hx-indicator="body"><table>
+<thead><tr><th>ID</th><th>Service</th><th>Status</th><th>Health</th><th>Ready</th><th>Node</th><th>Restarts</th></tr></thead><tbody>
+{{range .Replicas}}<tr><td>{{.ID}}</td><td>{{.ServiceName}}</td><td><span class="status-badge badge {{.Status}}">{{.Status}}</span></td><td><span class="status-badge badge {{.Health}}">{{.Health}}</span></td><td>{{.Ready}}</td><td>{{.NodeName}}</td><td>{{.RestartCount}}</td></tr>{{end}}
+</tbody></table></div>{{end}}
