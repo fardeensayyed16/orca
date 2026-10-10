@@ -51,5 +51,5 @@ cd ../orclet && go build -o orclet ./cmd/orclet
 
 # Orca — Lightweight Container Orchestrator
 
-[![Orca Launch Video](docs/media/orca-launch.mp4)](docs/media/orca-launch.mp4)
+![Orca Launch Video](docs/media/orca-launch.gif)
 
