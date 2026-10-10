@@ -1,5 +1,9 @@
 # Orca — Lightweight Container Orchestrator
 
+![Orca Launch Video](docs/media/orca-launch.gif)
+
+A lightweight, multi-host container orchestrator that manages Docker containers across multiple machines on a LAN.
+
 A simplified, Kubernetes-like container orchestrator that manages Docker containers across multiple machines on a LAN.
 
 > *"Orca decides. Orclet executes."*
@@ -48,8 +52,4 @@ cd ../orclet && go build -o orclet ./cmd/orclet
 
 
 
-
-# Orca — Lightweight Container Orchestrator
-
-![Orca Launch Video](docs/media/orca-launch.gif)
 
