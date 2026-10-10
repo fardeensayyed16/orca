@@ -45,3 +45,11 @@ git clone https://github.com/fardeensayyed16/orclet.git
 
 cd orca && go build -o orca ./cmd/orca
 cd ../orclet && go build -o orclet ./cmd/orclet
+
+
+
+
+# Orca — Lightweight Container Orchestrator
+
+[![Orca Launch Video](docs/media/orca-launch.mp4)](docs/media/orca-launch.mp4)
+
