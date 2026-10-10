@@ -295,7 +295,8 @@ func scanService(scanner interface {
 	Scan(dest ...any) error
 }) (*types.Service, error) {
 	var svc types.Service
-	var envStr, cmdStr, liveStr, readyStr, autoStr, createdStr, updatedStr string
+	var envStr, cmdStr, createdStr, updatedStr string
+	var liveStr, readyStr, autoStr sql.NullString
 	var restartPol, pullPol string
 
 	err := scanner.Scan(
@@ -312,17 +313,17 @@ func scanService(scanner interface {
 	svc.PullPolicy = types.PullPolicy(pullPol)
 	_ = json.Unmarshal([]byte(envStr), &svc.Env)
 	_ = json.Unmarshal([]byte(cmdStr), &svc.Command)
-	if liveStr != "" && liveStr != "null" {
+	if liveStr.Valid && liveStr.String != "" && liveStr.String != "null" {
 		svc.Liveness = &types.Probe{}
-		_ = json.Unmarshal([]byte(liveStr), svc.Liveness)
+		_ = json.Unmarshal([]byte(liveStr.String), svc.Liveness)
 	}
-	if readyStr != "" && readyStr != "null" {
+	if readyStr.Valid && readyStr.String != "" && readyStr.String != "null" {
 		svc.Readiness = &types.Probe{}
-		_ = json.Unmarshal([]byte(readyStr), svc.Readiness)
+		_ = json.Unmarshal([]byte(readyStr.String), svc.Readiness)
 	}
-	if autoStr != "" && autoStr != "null" {
+	if autoStr.Valid && autoStr.String != "" && autoStr.String != "null" {
 		svc.Autoscale = &types.AutoScaleConfig{}
-		if err := json.Unmarshal([]byte(autoStr), svc.Autoscale); err != nil {
+		if err := json.Unmarshal([]byte(autoStr.String), svc.Autoscale); err != nil {
 			return nil, fmt.Errorf("decode autoscale config for service %q: %w", svc.Name, err)
 		}
 	}

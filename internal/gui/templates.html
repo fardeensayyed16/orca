@@ -1,0 +1,45 @@
+{{define "layout"}}
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orca</title><script src="https://unpkg.com/htmx.org@1.9.10"></script>
+<style>
+body{font:15px system-ui,sans-serif;background:#f4f4f4;color:#222;margin:0}
+nav{background:#222;padding:1rem}nav a{color:#fff;margin-right:1rem}
+main{max-width:1100px;margin:2rem auto;padding:0 1rem}
+table{border-collapse:collapse;width:100%;background:#fff}th,td{text-align:left;padding:.65rem;border-bottom:1px solid #ddd}
+button{background:#397a55;color:#fff;border:0;padding:.45rem .7rem;cursor:pointer}
+.NotReady,.Failed,.Unhealthy{color:#b33}.Ready,.Running,.Healthy{color:#397a55}
+input{padding:.4rem;margin:.2rem}
+</style></head><body>
+<nav><a href="/">Home</a><a href="/nodes">Nodes</a><a href="/services">Services</a><a href="/pods">Pods</a></nav>
+<main>{{template "body" .}}</main></body></html>
+{{end}}
+{{define "index"}}{{template "layout" .}}{{end}}
+{{define "body"}}{{if eq .Page "index"}}<h1>Orca Dashboard</h1>{{template "summary" .}}
+{{else if eq .Page "nodes"}}<h1>Nodes</h1>{{template "nodes_table" .}}
+{{else if eq .Page "services"}}<h1>Services</h1><form method="post" action="/api/v1/gui/deploy">
+<input name="name" placeholder="Name" required><input name="image" placeholder="Image" required>
+<input name="replicas" type="number" min="1" value="1" required><button>Deploy</button></form>
+{{template "services_table" .}}
+{{else if eq .Page "pods"}}<h1>Pods</h1>{{template "pods_table" .}}{{end}}{{end}}
+{{define "summary"}}<div id="summary" hx-get="/api/v1/gui/summary" hx-trigger="every 30s" hx-swap="outerHTML">
+Daemon: {{.DaemonStatus}} | Services: {{.ServiceCount}} | Running: {{.RunningCount}} | Healthy: {{.HealthyCount}} | Ready: {{.ReadyCount}} | Ready nodes: {{.NodeReadyCount}}
+</div>{{end}}
+{{define "nodes"}}{{template "layout" .}}{{end}}
+{{define "services"}}{{template "layout" .}}{{end}}
+{{define "pods"}}{{template "layout" .}}{{end}}
+{{define "nodes_table"}}<div hx-get="/api/v1/gui/nodes" hx-trigger="every 30s" hx-swap="outerHTML"><table>
+<tr><th>Name</th><th>Status</th><th>CPU</th><th>Mem</th><th>Last Seen</th><th>Address</th><th></th></tr>
+{{range .Nodes}}<tr><td>{{.Name}}</td><td class="{{.Status}}">{{.Status}}</td><td>{{.CapacityCPUMillis}}m</td><td>{{.CapacityMemoryBytes}}</td><td>{{.LastSeen}}</td><td>{{.Address}}</td>
+<td><form method="post" action="/api/v1/gui/delete-node"><input type="hidden" name="name" value="{{.Name}}"><button>Delete</button></form></td></tr>{{end}}
+</table></div>{{end}}
+{{define "services_table"}}<div hx-get="/api/v1/gui/services" hx-trigger="every 30s" hx-swap="outerHTML"><table>
+<tr><th>Name</th><th>Image</th><th>Replicas</th><th>Port</th><th>Actions</th></tr>
+{{range .Services}}<tr><td>{{.Name}}</td><td>{{.Image}}</td><td>{{.Replicas}}</td><td>{{.ServicePort}}</td><td>
+<form method="post" action="/api/v1/gui/scale"><input type="hidden" name="name" value="{{.Name}}"><input name="replicas" type="number" min="1" value="{{.Replicas}}" required><button>Scale</button></form>
+<form method="post" action="/api/v1/gui/delete-service"><input type="hidden" name="name" value="{{.Name}}"><button>Delete</button></form>
+</td></tr>{{end}}</table></div>{{end}}
+{{define "pods_table"}}<div hx-get="/api/v1/gui/pods" hx-trigger="every 30s" hx-swap="outerHTML"><table>
+<tr><th>ID</th><th>Service</th><th>Status</th><th>Health</th><th>Ready</th><th>Node</th><th>Restarts</th></tr>
+{{range .Replicas}}<tr><td>{{.ID}}</td><td>{{.ServiceName}}</td><td class="{{.Status}}">{{.Status}}</td><td class="{{.Health}}">{{.Health}}</td><td>{{.Ready}}</td><td>{{.NodeName}}</td><td>{{.RestartCount}}</td></tr>{{end}}
+</table></div>{{end}}

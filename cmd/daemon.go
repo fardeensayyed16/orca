@@ -14,6 +14,7 @@ import (
 
 	"github.com/fardeensayyed16/orca/internal/api"
 	"github.com/fardeensayyed16/orca/internal/autoscaler"
+	"github.com/fardeensayyed16/orca/internal/gui"
 	"github.com/fardeensayyed16/orca/internal/proxy"
 	"github.com/fardeensayyed16/orca/internal/reconciler"
 	"github.com/fardeensayyed16/orca/internal/serviceports"
@@ -39,7 +40,7 @@ var daemonCmd = &cobra.Command{
 
 		// Resolve addresses
 		bindAddr := firstNonEmpty(daemonBindAddress, config.GlobalConfig.Daemon.BindAddress, "0.0.0.0:9001")
-		guiBindAddr := firstNonEmpty(config.GlobalConfig.Daemon.GUIBindAddress, "127.0.0.1:9000")
+		guiBindAddr := "127.0.0.1:9000"
 		advAddr := firstNonEmpty(daemonAdvertiseAddress, config.GlobalConfig.Daemon.AdvertiseAddress, bindAddr)
 		dataDir := firstNonEmpty(daemonDataDir, config.GlobalConfig.Daemon.DataDir)
 
@@ -118,14 +119,11 @@ var daemonCmd = &cobra.Command{
 			}
 		}()
 
-		// 6. GUI Listener (stub; loopback only)
+		// 6. GUI Listener (loopback only)
 		var guiHTTP *http.Server
 		if !daemonNoGUI {
 			guiMux := http.NewServeMux()
-			guiMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("orca GUI"))
-			})
+			gui.RegisterRoutes(guiMux, store, dataDir)
 			guiHTTP = &http.Server{
 				Addr:    guiBindAddr,
 				Handler: guiMux,

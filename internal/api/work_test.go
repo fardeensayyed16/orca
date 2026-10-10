@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+
+	"github.com/fardeensayyed16/orca/internal/serviceports"
 	"time"
 
 	"github.com/fardeensayyed16/orca/internal/storage"
@@ -128,7 +131,13 @@ func TestHeartbeatPersistsReplicaObservation(t *testing.T) {
 }
 
 func TestCreateServiceNormalizesAndValidatesProbes(t *testing.T) {
-	server := NewServer(storage.NewMapStorage(), testToken)
+	port := freeTCPPort(t)
+	store := storage.NewMapStorage()
+	allocator, err := serviceports.NewAllocator(store, strconv.Itoa(port)+"-"+strconv.Itoa(port), "127.0.0.1:9001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(store, testToken, allocator)
 	body := []byte(`{"name":"web","image":"nginx","container_port":8080,"liveness":{"type":"http","port":8080},"readiness":{"type":"tcp","port":8080}}`)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/services", bytes.NewReader(body))
 	request.Header.Set("Authorization", "Bearer "+testToken)
