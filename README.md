@@ -60,7 +60,7 @@ git clone https://github.com/fardeensayyed16/orclet.git
 
 cd orca
 $env:GOOS="windows"; $env:GOARCH="amd64"
-go build -o orca.exe ./cmd/orca
+go build -o orca.exe .
 
 cd ..\orclet
 $env:GOOS="windows"; $env:GOARCH="amd64"
