@@ -97,7 +97,7 @@ For development convenience, the same Go code builds and runs on WSL2 Ubuntu or 
 
 bash
 cd ~/orca-project/orca
-go build -o orca ./cmd/orca
+go build -o orca .
 ./orca daemon --bind-address=0.0.0.0:9001 --advertise-address=127.0.0.1
 
 
@@ -125,7 +125,7 @@ bash
 git clone https://github.com/fardeensayyed16/orca.git
 git clone https://github.com/fardeensayyed16/orclet.git
 
-cd orca && go build -o orca ./cmd/orca
+cd orca && go build -o orca .
 cd ../orclet && go build -o orclet ./cmd/orclet
 
 
